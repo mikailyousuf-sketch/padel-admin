@@ -43,7 +43,7 @@ const sections = [
   }
 ]
 
-function StatIcon({ type, color }) {
+function StatIcon({ type, color }: { type: string, color: string }) {
   const props = { size: 20, color }
   if (type === 'calendar') return <Calendar {...props} />
   if (type === 'trending') return <TrendingUp {...props} />
@@ -53,10 +53,10 @@ function StatIcon({ type, color }) {
 }
 
 export default function Home() {
-  const [open, setOpen] = useState({ overview: true, peak: true, events: true })
+  const [open, setOpen] = useState<{ [key: string]: boolean }>({ overview: true, peak: true, events: true })
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const toggle = (id) => setOpen(prev => ({ ...prev, [id]: !prev[id] }))
+const toggle = (id: string) => setOpen(prev => ({ ...prev, [id]: !prev[id] }))
 
   return (
     <main style={{ minHeight: '100vh', background: '#f4f4f4' }}>
@@ -217,9 +217,9 @@ export default function Home() {
                             <p style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a' }}>{ev.name}</p>
                             <p style={{ fontSize: '12px', color: '#aaa', marginTop: '2px' }}>{ev.date}</p>
                           </div>
-                          <span style={{ fontSize: '14px', color: '#1a1a1a', textAlign: 'right' }}>R {ev.revenue.toLocaleString()}</span>
-                          <span style={{ fontSize: '14px', color: '#888', textAlign: 'right' }}>R {ev.cost.toLocaleString()}</span>
-                          <span style={{ fontSize: '14px', fontWeight: '700', color: profit > 0 ? '#16a34a' : VA_RED, textAlign: 'right' }}>R {profit.toLocaleString()}</span>
+                          <span style={{ fontSize: '14px', color: '#1a1a1a', textAlign: 'right' }}>R {ev.revenue}</span>
+                          <span style={{ fontSize: '14px', color: '#888', textAlign: 'right' }}>R {ev.cost}</span>
+                          <span style={{ fontSize: '14px', fontWeight: '700', color: profit > 0 ? '#16a34a' : VA_RED, textAlign: 'right' }}>R {profit}</span>
                         </div>
                       )
                     })}
@@ -232,9 +232,9 @@ export default function Home() {
                       gridTemplateColumns: '1fr 120px 120px 120px'
                     }}>
                       <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>Total</span>
-                      <span style={{ fontSize: '13px', color: '#fff', textAlign: 'right' }}>R {section.events.reduce((a, e) => a + e.revenue, 0).toLocaleString()}</span>
-                      <span style={{ fontSize: '13px', color: '#aaa', textAlign: 'right' }}>R {section.events.reduce((a, e) => a + e.cost, 0).toLocaleString()}</span>
-                      <span style={{ fontSize: '13px', fontWeight: '700', color: '#4ade80', textAlign: 'right' }}>R {section.events.reduce((a, e) => a + (e.revenue - e.cost), 0).toLocaleString()}</span>
+                      <span style={{ fontSize: '13px', color: '#fff', textAlign: 'right' }}>R {section.events.reduce((a, e) => a + e.revenue, 0)}</span>
+                      <span style={{ fontSize: '13px', color: '#aaa', textAlign: 'right' }}>R {section.events.reduce((a, e) => a + e.cost, 0)}</span>
+                      <span style={{ fontSize: '13px', fontWeight: '700', color: '#4ade80', textAlign: 'right' }}>R {section.events.reduce((a, e) => a + (e.revenue - e.cost), 0)}</span>
                     </div>
                   </div>
                 )}
