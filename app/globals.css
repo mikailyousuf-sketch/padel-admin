@@ -1,10 +1,48 @@
-* {
+*, *::before, *::after {
+  box-sizing: border-box;
   margin: 0;
   padding: 0;
-  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  background-color: #f4f4f4;
-  color: #1a1a1a;
+  background: #0a0a0a;
+  color: #f0f0f0;
+  min-height: 100vh;
 }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #0a0a0a; }
+::-webkit-scrollbar-thumb { background: #2e2e2e; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #e00a09; }
+
+/* Selection */
+::selection { background: rgba(224,10,9,0.3); color: #f0f0f0; }
+
+/* Smooth transitions for theme toggle */
+*, *::before, *::after {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.15s ease;
+}
+
+/* Input focus glow */
+input:focus, select:focus, textarea:focus {
+  border-color: #e00a09 !important;
+  box-shadow: 0 0 0 3px rgba(224,10,9,0.15) !important;
+}
+
+/* Remove number input arrows */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }
+
+/* Time input colour fix for dark mode */
+input[type=time]::-webkit-calendar-picker-indicator { filter: invert(0.5); }
+
+/* Light mode */
+html.light body { background: #f4f4f4; color: #0a0a0a; }
