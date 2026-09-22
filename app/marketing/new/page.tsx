@@ -1,12 +1,11 @@
 'use client'
 
-import { useState } from 'react'
-import { Megaphone, Plus, Calendar, User, ImageIcon, X, MessageSquare, ArrowLeft, FileText, Plus as PlusIcon } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Megaphone, Plus, Calendar, User, ImageIcon, X, MessageSquare, ArrowLeft, Plus as PlusIcon } from 'lucide-react'
 import { theme } from '../../components/theme'
+import { listActiveClubs, listBriefsForClub, listAllBriefCounts, createBrief, completeBrief } from './actions'
 
 const T = theme
-
-const CLUB_NAMES = ['BALLITO','BEDFORDVIEW','CENTURION','DURBANVILLE','EPICENTRE','GATEWAY','GEORGE','GLEN','GROENKLOOF','HUDDLE','LORRAINE','LOURENSFORD','LONEHILL','OLD EDS','POINT','RANDPARK','WOODSTOCK']
 
 const GRADIENTS = [
   ['#e00a09', '#7a0605'], ['#a855f7', '#5b2d8a'], ['#3b82f6', '#1e4e8c'],
@@ -19,43 +18,22 @@ function clubGradient(name: string) {
   return GRADIENTS[hash]
 }
 
-const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'] as const
-type Priority = typeof PRIORITIES[number]
-
-const PRIORITY_COLORS: Record<Priority, { color: string; bg: string; border: string }> = {
-  Low:    { color: T.colors.textSecondary, bg: T.colors.surfaceRaised, border: T.colors.border },
-  Normal: { color: '#3b82f6', bg: 'rgba(59,130,246,0.1)', border: 'rgba(59,130,246,0.2)' },
-  High:   { color: T.colors.amber, bg: T.colors.amberGlow, border: 'rgba(245,158,11,0.2)' },
-  Urgent: { color: T.colors.red, bg: T.colors.redGlow, border: 'rgba(224,10,9,0.2)' },
+const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
+const PRIORITY_LABELS: Record<string, string> = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' }
+const PRIORITY_COLORS: Record<string, { color: string; bg: string; border: string }> = {
+  low:    { color: T.colors.textSecondary, bg: T.colors.surfaceRaised, border: T.colors.border },
+  normal: { color: '#3b82f6', bg: 'rgba(59,130,246,0.1)', border: 'rgba(59,130,246,0.2)' },
+  high:   { color: T.colors.amber, bg: T.colors.amberGlow, border: 'rgba(245,158,11,0.2)' },
+  urgent: { color: T.colors.red, bg: T.colors.redGlow, border: 'rgba(224,10,9,0.2)' },
 }
 
-type BriefStatus = 'Submitted' | 'In Design' | 'Review' | 'Completed'
-const STATUS_COLORS: Record<BriefStatus, { color: string; bg: string; border: string }> = {
-  Submitted: { color: T.colors.textSecondary, bg: T.colors.surfaceRaised, border: T.colors.border },
-  'In Design': { color: '#3b82f6', bg: 'rgba(59,130,246,0.1)', border: 'rgba(59,130,246,0.2)' },
-  Review:    { color: T.colors.amber, bg: T.colors.amberGlow, border: 'rgba(245,158,11,0.2)' },
-  Completed: { color: T.colors.green, bg: T.colors.greenGlow, border: 'rgba(34,197,94,0.2)' },
+const STATUS_LABELS: Record<string, string> = { submitted: 'Submitted', in_design: 'In Design', review: 'Review', completed: 'Completed' }
+const STATUS_COLORS: Record<string, { color: string; bg: string; border: string }> = {
+  submitted: { color: T.colors.textSecondary, bg: T.colors.surfaceRaised, border: T.colors.border },
+  in_design: { color: '#3b82f6', bg: 'rgba(59,130,246,0.1)', border: 'rgba(59,130,246,0.2)' },
+  review:    { color: T.colors.amber, bg: T.colors.amberGlow, border: 'rgba(245,158,11,0.2)' },
+  completed: { color: T.colors.green, bg: T.colors.greenGlow, border: 'rgba(34,197,94,0.2)' },
 }
-
-interface Brief {
-  id: number
-  club: string
-  title: string
-  assignee: string
-  priority: Priority
-  dueDate: string
-  description: string
-  refImageNames: string[]
-  status: BriefStatus
-  submittedDate: string
-  clickupTaskId?: string
-}
-
-const MOCK_BRIEFS: Brief[] = [
-  { id: 1, club: 'WOODSTOCK', title: 'Sunrise Saturdays Poster', assignee: 'Design Team', priority: 'High', dueDate: '2026-06-25', description: 'A3 poster for the weekly Saturday social, bright morning theme.', refImageNames: ['sunrise_ref.jpg'], status: 'In Design', submittedDate: '2026-06-15' },
-  { id: 2, club: 'CENTURION', title: 'Corporate Tournament Flyer', assignee: 'Amber K', priority: 'Urgent', dueDate: '2026-06-22', description: 'Sponsor-branded flyer for the corporate tournament, include all 4 sponsor logos.', refImageNames: ['sponsor_logo_1.png', 'sponsor_logo_2.png', 'sponsor_logo_3.png'], status: 'Review', submittedDate: '2026-06-14' },
-  { id: 3, club: 'GATEWAY', title: 'Junior Academy Social Tile', assignee: 'Design Team', priority: 'Normal', dueDate: '2026-06-30', description: 'Instagram square tile for the junior academy day, playful and colourful.', refImageNames: [], status: 'Submitted', submittedDate: '2026-06-18' },
-]
 
 const fieldLabel: React.CSSProperties = {
   fontSize: '11px', fontWeight: '600', color: T.colors.textSecondary,
@@ -71,40 +49,103 @@ function Meta({ icon, label }: { icon: React.ReactNode; label: string }) {
 }
 
 export default function NewFlyerDesignPage() {
-  const [briefs, setBriefs]   = useState<Brief[]>(MOCK_BRIEFS)
-  const [activeClub, setActiveClub] = useState<string | null>(null)
+  const [clubs, setClubs] = useState<{ id: string; name: string }[]>([])
+  const [briefCounts, setBriefCounts] = useState<Record<string, number>>({})
+  const [activeClubId, setActiveClubId] = useState<string | null>(null)
+  const [briefs, setBriefs] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
+  const [loading, setLoading] = useState(true)
 
-  const [title, setTitle]       = useState('')
+  const [title, setTitle] = useState('')
   const [assignee, setAssignee] = useState('')
-  const [priority, setPriority] = useState<Priority>('Normal')
-  const [dueDate, setDueDate]   = useState('')
+  const [priority, setPriority] = useState('normal')
+  const [dueDate, setDueDate] = useState('')
   const [description, setDescription] = useState('')
   const [refImages, setRefImages] = useState<File[]>([])
 
-  const resetForm = () => { setTitle(''); setAssignee(''); setPriority('Normal'); setDueDate(''); setDescription(''); setRefImages([]) }
+  const [completingBriefId, setCompletingBriefId] = useState<string | null>(null)
+const [flyerEventName, setFlyerEventName] = useState('')
+const [flyerDate, setFlyerDate] = useState('')
+const [flyerTime, setFlyerTime] = useState('')
+const [flyerPrice, setFlyerPrice] = useState('')
+const [flyerLocation, setFlyerLocation] = useState('')
+const [flyerImage, setFlyerImage] = useState<File | null>(null)
 
-  const addRefImages = (files: FileList | null) => {
+  useEffect(() => {
+    async function init() {
+      const c = await listActiveClubs()
+      setClubs(c)
+      const counts = await listAllBriefCounts()
+      const grouped: Record<string, number> = {}
+      counts.forEach((row: any) => { grouped[row.club_id] = (grouped[row.club_id] ?? 0) + 1 })
+      setBriefCounts(grouped)
+      setLoading(false)
+    }
+    init()
+  }, [])
+
+  async function openClub(clubId: string) {
+    setActiveClubId(clubId)
+    const b = await listBriefsForClub(clubId)
+    setBriefs(b)
+  }
+
+  function resetForm() { setTitle(''); setAssignee(''); setPriority('normal'); setDueDate(''); setDescription(''); setRefImages([]) }
+
+  function addRefImages(files: FileList | null) {
     if (!files) return
     setRefImages(prev => [...prev, ...Array.from(files)])
   }
-  const removeRefImage = (idx: number) => {
+  function removeRefImage(idx: number) {
     setRefImages(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const submitBrief = (club: string) => {
-    if (!title || !dueDate) return
-    const newBrief: Brief = {
-      id: Date.now(), club, title, assignee: assignee || 'Design Team', priority, dueDate,
-      description, refImageNames: refImages.map(f => f.name),
-      status: 'Submitted', submittedDate: new Date().toISOString().split('T')[0],
-    }
-    setBriefs(prev => [newBrief, ...prev])
+  async function handleSubmitBrief() {
+    if (!title || !dueDate || !activeClubId) return
+    const formData = new FormData()
+    formData.set('clubId', activeClubId)
+    formData.set('title', title)
+    formData.set('assignee', assignee || 'Design Team')
+    formData.set('priority', priority)
+    formData.set('dueDate', dueDate)
+    formData.set('description', description)
+    refImages.forEach(f => formData.append('refImageNames', f.name))
+
+    await createBrief(formData)
     resetForm()
     setShowForm(false)
+    const b = await listBriefsForClub(activeClubId)
+    setBriefs(b)
+    const counts = await listAllBriefCounts()
+    const grouped: Record<string, number> = {}
+    counts.forEach((row: any) => { grouped[row.club_id] = (grouped[row.club_id] ?? 0) + 1 })
+    setBriefCounts(grouped)
   }
 
-  if (!activeClub) {
+  async function handleCompleteBrief(briefId: string) {
+  if (!flyerEventName || !flyerImage) return
+  const formData = new FormData()
+  formData.set('clubId', activeClubId!)
+  formData.set('eventName', flyerEventName)
+  formData.set('eventDate', flyerDate)
+  formData.set('eventTime', flyerTime)
+  formData.set('price', flyerPrice)
+  formData.set('location', flyerLocation)
+  formData.set('imageName', flyerImage.name)
+
+  await completeBrief(briefId, formData)
+  setCompletingBriefId(null)
+  setFlyerEventName(''); setFlyerDate(''); setFlyerTime(''); setFlyerPrice(''); setFlyerLocation(''); setFlyerImage(null)
+
+  const b = await listBriefsForClub(activeClubId!)
+  setBriefs(b)
+}
+
+  if (loading) {
+    return <div style={{ minHeight: '100vh', background: T.colors.bg, padding: '32px 36px', color: T.colors.textSecondary }}>Loading...</div>
+  }
+
+  if (!activeClubId) {
     return (
       <div style={{ minHeight: '100vh', background: T.colors.bg }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 36px' }}>
@@ -116,7 +157,7 @@ export default function NewFlyerDesignPage() {
             </div>
             <h1 style={{ fontSize: '26px', fontWeight: '700', color: T.colors.textPrimary, margin: 0, letterSpacing: '-0.02em' }}>New Flyer Design</h1>
             <p style={{ fontSize: '13px', color: T.colors.textSecondary, marginTop: '5px' }}>
-              Select a club to submit a design brief · {briefs.length} active briefs
+              Select a club to submit a design brief
             </p>
           </div>
 
@@ -128,19 +169,18 @@ export default function NewFlyerDesignPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
-            {CLUB_NAMES.map(club => {
-              const [c1, c2] = clubGradient(club)
-              const clubBriefs = briefs.filter(b => b.club === club)
-              const activeCount = clubBriefs.filter(b => b.status !== 'Completed').length
+            {clubs.map(club => {
+              const [c1, c2] = clubGradient(club.name)
+              const activeCount = briefCounts[club.id] ?? 0
               return (
                 <ClubTile
-                  key={club}
-                  name={club}
+                  key={club.id}
+                  name={club.name.toUpperCase()}
                   gradientFrom={c1}
                   gradientTo={c2}
                   count={activeCount}
                   countLabel={activeCount === 1 ? 'active brief' : 'active briefs'}
-                  onClick={() => setActiveClub(club)}
+                  onClick={() => openClub(club.id)}
                 />
               )
             })}
@@ -150,14 +190,14 @@ export default function NewFlyerDesignPage() {
     )
   }
 
-  const clubBriefs = briefs.filter(b => b.club === activeClub)
-  const [c1, c2] = clubGradient(activeClub)
+  const activeClubName = clubs.find(c => c.id === activeClubId)?.name.toUpperCase() ?? ''
+  const [c1, c2] = clubGradient(activeClubName)
 
   return (
     <div style={{ minHeight: '100vh', background: T.colors.bg }}>
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '32px 36px' }}>
 
-        <button onClick={() => { setActiveClub(null); setShowForm(false); resetForm() }} style={{
+        <button onClick={() => { setActiveClubId(null); setShowForm(false); resetForm() }} style={{
           display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none',
           color: T.colors.textMuted, cursor: 'pointer', fontSize: '13px', fontFamily: 'inherit', padding: 0, marginBottom: '20px',
         }}>
@@ -171,7 +211,7 @@ export default function NewFlyerDesignPage() {
         }}>
           <div>
             <p style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 6px' }}>New brief</p>
-            <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', margin: 0, letterSpacing: '-0.01em' }}>{activeClub}</h1>
+            <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', margin: 0, letterSpacing: '-0.01em' }}>{activeClubName}</h1>
           </div>
           <button onClick={() => setShowForm(!showForm)} style={{
             background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
@@ -202,8 +242,8 @@ export default function NewFlyerDesignPage() {
               </div>
               <div>
                 <label style={fieldLabel}>Priority</label>
-                <select value={priority} onChange={e => setPriority(e.target.value as Priority)} style={{ ...T.input, cursor: 'pointer' }}>
-                  {PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
+                <select value={priority} onChange={e => setPriority(e.target.value)} style={{ ...T.input, cursor: 'pointer' }}>
+                  {PRIORITIES.map(p => <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>)}
                 </select>
               </div>
               <div>
@@ -217,9 +257,9 @@ export default function NewFlyerDesignPage() {
               <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the design, theme, dimensions, key info to include..." rows={3} style={{ ...T.input, resize: 'vertical', fontFamily: 'inherit' }} />
             </div>
 
-            {/* Multi-file reference image upload */}
             <div style={{ marginBottom: '18px' }}>
               <label style={fieldLabel}>Reference Images (optional — sponsor logos, examples, etc.)</label>
+              <p style={{ fontSize: '11px', color: T.colors.textMuted, margin: '0 0 8px' }}>Filename only for now — file storage not yet wired.</p>
 
               {refImages.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
@@ -243,42 +283,77 @@ export default function NewFlyerDesignPage() {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => submitBrief(activeClub)} disabled={!title || !dueDate} style={{ ...T.btn.primary, opacity: (!title || !dueDate) ? 0.4 : 1, cursor: (!title || !dueDate) ? 'not-allowed' : 'pointer' }}>Submit Brief</button>
+              <button onClick={handleSubmitBrief} disabled={!title || !dueDate} style={{ ...T.btn.primary, opacity: (!title || !dueDate) ? 0.4 : 1, cursor: (!title || !dueDate) ? 'not-allowed' : 'pointer' }}>Submit Brief</button>
               <button onClick={() => { setShowForm(false); resetForm() }} style={T.btn.secondary}>Cancel</button>
             </div>
           </div>
         )}
 
         <p style={{ fontSize: '11px', fontWeight: '700', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '12px' }}>
-          Briefs for {activeClub}
+          Briefs for {activeClubName}
         </p>
 
-        {clubBriefs.length === 0 ? (
+        {briefs.length === 0 ? (
           <div style={{ ...T.card, textAlign: 'center', padding: '32px', color: T.colors.textMuted, fontSize: '13px' }}>
             No briefs submitted for this club yet.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {clubBriefs.map(brief => {
-              const pc = PRIORITY_COLORS[brief.priority]
-              const sc = STATUS_COLORS[brief.status]
+            {briefs.map((brief: any) => {
+              const pc = PRIORITY_COLORS[brief.priority] ?? PRIORITY_COLORS.normal
+              const sc = STATUS_COLORS[brief.status] ?? STATUS_COLORS.submitted
+              const refImageNames: string[] = brief.ref_image_names ?? []
               return (
                 <div key={brief.id} style={{ ...T.card, marginBottom: 0, padding: '16px 18px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
                         <p style={{ fontSize: '14px', fontWeight: '600', color: T.colors.textPrimary, margin: 0 }}>{brief.title}</p>
-                        <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 7px', borderRadius: '999px', textTransform: 'uppercase', ...pc }}>{brief.priority}</span>
+                        <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 7px', borderRadius: '999px', textTransform: 'uppercase', ...pc }}>{PRIORITY_LABELS[brief.priority]}</span>
                       </div>
                       <p style={{ fontSize: '12px', color: T.colors.textSecondary, margin: 0 }}>{brief.description}</p>
                     </div>
-                    <span style={{ fontSize: '10px', fontWeight: '600', padding: '4px 10px', borderRadius: '999px', whiteSpace: 'nowrap', ...sc }}>{brief.status}</span>
+                    {brief.status !== 'completed' && (
+  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${T.colors.border}` }}>
+    {completingBriefId !== brief.id ? (
+      <button onClick={() => setCompletingBriefId(brief.id)} style={{ ...T.btn.secondary, fontSize: '12px' }}>
+        Mark Complete &amp; Publish Flyer
+      </button>
+    ) : (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ fontSize: '11px', fontWeight: '700', color: T.colors.textMuted, textTransform: 'uppercase', margin: 0 }}>Publish Flyer</p>
+        <input placeholder="Event Name" value={flyerEventName} onChange={e => setFlyerEventName(e.target.value)} style={T.input} />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <input type="date" value={flyerDate} onChange={e => setFlyerDate(e.target.value)} style={T.input} />
+          <input type="time" value={flyerTime} onChange={e => setFlyerTime(e.target.value)} style={T.input} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <input placeholder="Price (e.g. R150)" value={flyerPrice} onChange={e => setFlyerPrice(e.target.value)} style={T.input} />
+          <input placeholder="Location" value={flyerLocation} onChange={e => setFlyerLocation(e.target.value)} style={T.input} />
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: T.colors.surface, border: `1px dashed ${T.colors.borderBright}`, borderRadius: T.radius.sm, cursor: 'pointer' }}>
+          <span style={{ fontSize: '13px', color: T.colors.textMuted }}>
+            {flyerImage ? flyerImage.name : 'Upload final flyer design (JPG, PNG)'}
+          </span>
+          <input type="file" accept=".jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => setFlyerImage(e.target.files?.[0] ?? null)} />
+        </label>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => handleCompleteBrief(brief.id)} disabled={!flyerEventName || !flyerImage} style={{ ...T.btn.primary, opacity: (!flyerEventName || !flyerImage) ? 0.4 : 1 }}>
+            Publish to Flyer Updates
+          </button>
+          <button onClick={() => setCompletingBriefId(null)} style={T.btn.ghost}>Cancel</button>
+        </div>
+      </div>
+    )}
+  </div>
+)}
+                    <span style={{ fontSize: '10px', fontWeight: '600', padding: '4px 10px', borderRadius: '999px', whiteSpace: 'nowrap', ...sc }}>{STATUS_LABELS[brief.status]}</span>
                   </div>
                   <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap' }}>
                     <Meta icon={<User size={11} />} label={brief.assignee} />
-                    <Meta icon={<Calendar size={11} />} label={`Due ${new Date(brief.dueDate).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}`} />
-                    {brief.refImageNames.length > 0 && (
-                      <Meta icon={<ImageIcon size={11} />} label={`${brief.refImageNames.length} reference image${brief.refImageNames.length > 1 ? 's' : ''}`} />
+                    <Meta icon={<Calendar size={11} />} label={`Due ${brief.due_date ? new Date(brief.due_date).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '—'}`} />
+                    {refImageNames.length > 0 && (
+                      <Meta icon={<ImageIcon size={11} />} label={`${refImageNames.length} reference image${refImageNames.length > 1 ? 's' : ''}`} />
                     )}
                   </div>
                 </div>

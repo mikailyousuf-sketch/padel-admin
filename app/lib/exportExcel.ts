@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import { BRAND } from '@/lib/config/brand'
 
 const clubs = [
   { name: 'BALLITO', courts: 3, pickle: 0 },
@@ -23,7 +24,10 @@ const clubs = [
 const VAT = 1.15
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
-const RED = 'FFE00A09'
+// Excel ARGB format needs 'FF' + hex without the '#' — derived from the
+// same BRAND.primaryColor that drives the app's UI, so report styling
+// re-skins along with everything else.
+const RED = 'FF' + BRAND.primaryColor.replace('#', '').toUpperCase()
 const DARK = 'FF1A1A1A'
 const LIGHT_GRAY = 'FFF4F4F4'
 const WHITE = 'FFFFFFFF'
@@ -108,7 +112,7 @@ export async function generateOccupancyExcel(
   clubConfigs: ClubConfig[]
 ): Promise<Blob> {
   const workbook = new ExcelJS.Workbook()
-  workbook.creator = 'Padel Admin'
+  workbook.creator = BRAND.name
   workbook.created = new Date()
 
   const monthName = new Date(year, month, 1).toLocaleString('default', { month: 'long' }).toUpperCase()
@@ -403,11 +407,12 @@ export async function generateEventsExcel(
     courtsUsed: number
     duration: number
     courtRate: number
+    royaltyRate: number
   }[],
   expenses: Record<number, EventExpenses>
 ): Promise<Blob> {
   const workbook = new ExcelJS.Workbook()
-  workbook.creator = 'Padel Admin'
+  workbook.creator = BRAND.name
   workbook.created = new Date()
 
   const calcRevenue = (e: typeof events[0]) => e.costPerPerson * e.players
@@ -431,7 +436,9 @@ export async function generateEventsExcel(
     calcCourtExp(e) + calcDrinkTotal(e.id) + calcBallTotal(e.id) + calcAdhocTotal(e.id)
   const calcPL = (e: typeof events[0]) =>
     calcRevenue(e) - calcTotalExp(e) + calcSponsorTotal(e.id)
-  const calcRoyalty = (e: typeof events[0]) => calcRevenue(e) * 0.06
+  // Royalty rate is per-club (set on Revenue & Targets) and snapshotted onto
+  // each event at creation — no longer a hardcoded flat 6%.
+  const calcRoyalty = (e: typeof events[0]) => calcRevenue(e) * e.royaltyRate
   const calcNet = (e: typeof events[0]) => calcPL(e) - calcRoyalty(e)
 
   const weeks = [...new Set(events.map(e => e.week))].sort()
@@ -624,7 +631,7 @@ export async function generateEventsExcel(
   const summary = workbook.addWorksheet('SUMMARY', {
     pageSetup: { orientation: 'landscape', fitToPage: true }
   })
-  buildSheet(summary, `VIRGIN ACTIVE PADEL — EVENT P&L REPORT · ${club} · ${month} ${year}`)
+  buildSheet(summary, `${BRAND.reportHeader} — EVENT P&L REPORT · ${club} · ${month} ${year}`)
 
   const clubSheet = workbook.addWorksheet(`${club} - ${month}`, {
     pageSetup: { orientation: 'landscape', fitToPage: true }
@@ -651,7 +658,7 @@ export async function generateAllClubsEventsExcel(
   }[]
 ): Promise<Blob> {
   const workbook = new ExcelJS.Workbook()
-  workbook.creator = 'Padel Admin'
+  workbook.creator = BRAND.name
   workbook.created = new Date()
 
   const ws = workbook.addWorksheet('ALL CLUBS SUMMARY', {
@@ -667,7 +674,7 @@ export async function generateAllClubsEventsExcel(
   // ── Title banner ──
   ws.mergeCells(1, 1, 1, headers.length)
   const titleCell = ws.getCell('A1')
-  titleCell.value = `VIRGIN ACTIVE PADEL — ALL CLUBS EVENT P&L SUMMARY · ${month.toUpperCase()} ${year}`
+  titleCell.value = `${BRAND.reportHeader} — ALL CLUBS EVENT P&L SUMMARY · ${month.toUpperCase()} ${year}`
   titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RED } }
   titleCell.font = { bold: true, color: { argb: WHITE }, size: 12 }
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
@@ -748,7 +755,7 @@ export async function generateAllClubsEventsExcel(
 
   // ── Footer note ──
   const noteRow = currentRow + 2
-  ws.getCell(noteRow, 1).value = `Generated ${new Date().toLocaleDateString('en-ZA')} · Royalty deducted at 6% of gross revenue`
+  ws.getCell(noteRow, 1).value = `Generated ${new Date().toLocaleDateString('en-ZA')} · Royalty deducted per club's configured rate (see Revenue & Targets)`
   ws.getCell(noteRow, 1).font = { italic: true, size: 9, color: { argb: 'FF888888' } }
 
   const buffer = await workbook.xlsx.writeBuffer()

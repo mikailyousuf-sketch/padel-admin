@@ -3,17 +3,20 @@
 import { useState, useEffect } from 'react'
 import { Trophy, Plane, Heart, HelpCircle, CheckCircle2, Calendar, Shield, Users } from 'lucide-react'
 import { theme } from '../../components/theme'
+import { createClient } from '@/lib/supabase/client'
 
 const T = theme
 
-const CLUB_NAMES = ['BALLITO','BEDFORDVIEW','CENTURION','DURBANVILLE','EPICENTRE','GATEWAY','GEORGE','GLEN','GROENKLOOF','HUDDLE','LORRAINE','LOURENSFORD','LONEHILL','OLD EDS','POINT','RANDPARK','WOODSTOCK']
-
-// ── Tracked categories — only Ambassadors and Staff have real KPI targets.
-// All other categories (VAPC Members, VIP, etc.) are customer benefits, not tracked. ──
 const TRACKED_CATEGORIES = ['Staff', 'Ambassadors'] as const
 type TrackedCategory = typeof TRACKED_CATEGORIES[number]
 
+// UI label <-> DB value mapping (DB stores lowercase singular)
+const CATEGORY_TO_DB: Record<TrackedCategory, string> = { Staff: 'staff', Ambassadors: 'ambassador' }
+const DB_TO_CATEGORY: Record<string, TrackedCategory> = { staff: 'Staff', ambassador: 'Ambassadors' }
+
 type PlayerStatus = 'Active' | 'Injured' | 'Travelling' | 'Other'
+const STATUS_TO_DB: Record<PlayerStatus, string> = { Active: 'active', Injured: 'injured', Travelling: 'travelling', Other: 'other' }
+const DB_TO_STATUS: Record<string, PlayerStatus> = { active: 'Active', injured: 'Injured', travelling: 'Travelling', other: 'Other' }
 
 const STATUS_META: Record<PlayerStatus, { color: string; bg: string; border: string; icon: React.ReactNode }> = {
   Active:     { color: T.colors.green, bg: T.colors.greenGlow, border: 'rgba(34,197,94,0.2)', icon: <CheckCircle2 size={12} /> },
@@ -23,7 +26,7 @@ const STATUS_META: Record<PlayerStatus, { color: string; bg: string; border: str
 }
 
 interface Player {
-  id: number
+  id: string
   name: string
   category: TrackedCategory
   club: string
@@ -35,36 +38,9 @@ interface Player {
   statusNote: string
 }
 
-// Mock roster — same players referenced in Reports' Player Tracker.
-// openGames/privateGames will be pulled live from Playtomic once connected;
-// for now they're seeded mock activity for the current month.
-const MOCK_PLAYERS: Player[] = [
-  { id: 1, name: 'Jason Mokoena',      category: 'Staff',       club: 'WOODSTOCK',  openGames: 5, privateGames: 3, status: 'Active', statusFrom: null, statusTo: null, statusNote: '' },
-  { id: 2, name: 'Lerato Dlamini',     category: 'Staff',       club: 'WOODSTOCK',  openGames: 7, privateGames: 4, status: 'Active', statusFrom: null, statusTo: null, statusNote: '' },
-  { id: 3, name: 'Sipho Ndlovu',       category: 'Ambassadors', club: 'CENTURION',  openGames: 2, privateGames: 1, status: 'Injured', statusFrom: '2026-06-10', statusTo: '2026-06-30', statusNote: 'Ankle sprain during a social match, expected back end of month.' },
-  { id: 4, name: 'Anika van der Berg', category: 'Ambassadors', club: 'GATEWAY',    openGames: 4, privateGames: 3, status: 'Active', statusFrom: null, statusTo: null, statusNote: '' },
-  { id: 5, name: 'Tariq Hendricks',    category: 'Staff',       club: 'BALLITO',    openGames: 3, privateGames: 2, status: 'Travelling', statusFrom: '2026-06-15', statusTo: '2026-06-22', statusNote: 'Attending coaching certification course.' },
-  { id: 6, name: 'Nadia Rousseau',     category: 'Ambassadors', club: 'WOODSTOCK',  openGames: 3, privateGames: 1, status: 'Active', statusFrom: null, statusTo: null, statusNote: '' },
-]
-
-const STORAGE_KEY = 'padel_kpi_config'
-
 interface CategoryTarget {
   openGames: number
   privateGames: number
-}
-
-interface KPIConfig {
-  targets: Record<TrackedCategory, CategoryTarget>
-  players: Player[]
-}
-
-const defaultConfig: KPIConfig = {
-  targets: {
-    Staff:       { openGames: 6, privateGames: 4 },
-    Ambassadors: { openGames: 4, privateGames: 2 },
-  },
-  players: MOCK_PLAYERS,
 }
 
 const lbl: React.CSSProperties = {
@@ -85,43 +61,112 @@ function daysActive(from: string | null, to: string | null) {
 }
 
 export default function PlayerKPITargetsPage() {
-  const [config, setConfig] = useState<KPIConfig>(defaultConfig)
+  const supabase = createClient()
+  const [targets, setTargets] = useState<Record<TrackedCategory, CategoryTarget>>({
+    Staff: { openGames: 0, privateGames: 0 },
+    Ambassadors: { openGames: 0, privateGames: 0 },
+  })
+  const [players, setPlayers] = useState<Player[]>([])
+  const [loading, setLoading] = useState(true)
   const [saved, setSaved] = useState(false)
-  const [editingStatusId, setEditingStatusId] = useState<number | null>(null)
+  const [targetsError, setTargetsError] = useState<string | null>(null)
+  const [editingStatusId, setEditingStatusId] = useState<string | null>(null)
   const [filterCategory, setFilterCategory] = useState<TrackedCategory | 'All'>('All')
   const [filterClub, setFilterClub] = useState<string>('All Clubs')
 
-  useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) setConfig(JSON.parse(stored))
-  }, [])
+  async function load() {
+    const [targetsRes, playersRes] = await Promise.all([
+      supabase.from('kpi_targets').select('category, open_game_target, private_game_target'),
+      supabase.from('players').select('id, name, category, status, monthly_open_games, monthly_private_games, status_from, status_to, status_note, clubs(name)'),
+    ])
 
-  const save = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
+    if (targetsRes.data) {
+      const next = { ...targets }
+      for (const row of targetsRes.data) {
+        const label = DB_TO_CATEGORY[row.category]
+        if (label) next[label] = { openGames: row.open_game_target, privateGames: row.private_game_target }
+      }
+      setTargets(next)
+    }
+
+    if (playersRes.data) {
+      setPlayers(
+        playersRes.data.map((row: any) => ({
+          id: row.id,
+          name: row.name,
+          category: DB_TO_CATEGORY[row.category] ?? 'Staff',
+          club: row.clubs?.name?.toUpperCase() ?? '',
+          openGames: row.monthly_open_games,
+          privateGames: row.monthly_private_games,
+          status: DB_TO_STATUS[row.status] ?? 'Active',
+          statusFrom: row.status_from,
+          statusTo: row.status_to,
+          statusNote: row.status_note ?? '',
+        }))
+      )
+    }
+
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  const updateTarget = (category: TrackedCategory, field: keyof CategoryTarget, value: number) => {
+    setTargets(prev => ({ ...prev, [category]: { ...prev[category], [field]: value } }))
+    setSaved(false)
+  }
+
+  const saveTargets = async () => {
+    setTargetsError(null)
+    const results = await Promise.all(
+      TRACKED_CATEGORIES.map(cat =>
+        supabase
+          .from('kpi_targets')
+          .update({
+            open_game_target: targets[cat].openGames,
+            private_game_target: targets[cat].privateGames,
+          })
+          .eq('category', CATEGORY_TO_DB[cat])
+      )
+    )
+    const failed = results.find(r => r.error)
+    if (failed?.error) {
+      // Most likely cause: this user isn't HOO / doesn't have manage_kpi_targets.
+      setTargetsError("You don't have permission to edit global KPI targets — contact HOO.")
+      return
+    }
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
 
-  const updateTarget = (category: TrackedCategory, field: keyof CategoryTarget, value: number) => {
-    setConfig(prev => ({ ...prev, targets: { ...prev.targets, [category]: { ...prev.targets[category], [field]: value } } }))
-    setSaved(false)
+  const updatePlayerStatus = async (id: string, updates: Partial<Player>) => {
+    setPlayers(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p))
+
+    const dbUpdate: any = {}
+    if (updates.status !== undefined) dbUpdate.status = STATUS_TO_DB[updates.status]
+    if (updates.statusFrom !== undefined) dbUpdate.status_from = updates.statusFrom
+    if (updates.statusTo !== undefined) dbUpdate.status_to = updates.statusTo
+    if (updates.statusNote !== undefined) dbUpdate.status_note = updates.statusNote
+
+    const { error } = await supabase.from('players').update(dbUpdate).eq('id', id)
+    if (error) {
+      console.error(error)
+      // Revert optimistic update on failure (e.g. RLS denied — wrong club)
+      load()
+    }
   }
 
-  const updatePlayerStatus = (id: number, updates: Partial<Player>) => {
-    setConfig(prev => ({
-      ...prev,
-      players: prev.players.map(p => p.id === id ? { ...p, ...updates } : p),
-    }))
-    setSaved(false)
-  }
-
-  const filteredPlayers = config.players.filter(p =>
+  const filteredPlayers = players.filter(p =>
     (filterCategory === 'All' || p.category === filterCategory) &&
     (filterClub === 'All Clubs' || p.club === filterClub)
   )
 
-  const flaggedCount = config.players.filter(p => p.status !== 'Active').length
-  const clubsWithPlayers = ['All Clubs', ...Array.from(new Set(config.players.map(p => p.club)))]
+  const flaggedCount = players.filter(p => p.status !== 'Active').length
+  const clubsWithPlayers = ['All Clubs', ...Array.from(new Set(players.map(p => p.club)))]
+
+  if (loading) {
+    return <div style={{ minHeight: '100vh', background: T.colors.bg, padding: '32px 36px', color: T.colors.textSecondary }}>Loading...</div>
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: T.colors.bg }}>
@@ -139,7 +184,6 @@ export default function PlayerKPITargetsPage() {
           </p>
         </div>
 
-        {/* ── Explainer ── */}
         <div style={{ ...T.card, marginBottom: '24px', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <Trophy size={16} color={T.colors.textMuted} />
           <p style={{ fontSize: '12px', color: T.colors.textMuted, margin: 0 }}>
@@ -147,9 +191,6 @@ export default function PlayerKPITargetsPage() {
           </p>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════
-            CATEGORY TARGETS — HOO sets these
-        ══════════════════════════════════════════════════════════════ */}
         <div style={{ ...T.card, marginBottom: '24px', border: `1px solid rgba(168,85,247,0.2)` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
             <Shield size={13} color="#a855f7" />
@@ -163,23 +204,24 @@ export default function PlayerKPITargetsPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
                     <label style={lbl}>Open Games</label>
-                    <input type="number" min={0} value={config.targets[cat].openGames} style={T.input}
+                    <input type="number" min={0} value={targets[cat].openGames} style={T.input}
                       onChange={e => updateTarget(cat, 'openGames', parseInt(e.target.value) || 0)} />
                   </div>
                   <div>
                     <label style={lbl}>Private Games</label>
-                    <input type="number" min={0} value={config.targets[cat].privateGames} style={T.input}
+                    <input type="number" min={0} value={targets[cat].privateGames} style={T.input}
                       onChange={e => updateTarget(cat, 'privateGames', parseInt(e.target.value) || 0)} />
                   </div>
                 </div>
               </div>
             ))}
           </div>
+          {targetsError && <p style={{ fontSize: '12px', color: T.colors.red, margin: '12px 0 0' }}>{targetsError}</p>}
+          <button onClick={saveTargets} style={{ ...T.btn.primary, marginTop: '16px', padding: '10px 24px' }}>
+            {saved ? '✓ Saved' : 'Save Targets'}
+          </button>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════
-            PLAYER ROSTER & STATUS — Club managers update this
-        ══════════════════════════════════════════════════════════════ */}
         <div style={{ ...T.card, marginBottom: '14px', padding: '14px 20px', border: `1px solid rgba(59,130,246,0.2)` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Users size={13} color="#3b82f6" />
@@ -221,7 +263,7 @@ export default function PlayerKPITargetsPage() {
             const meta = STATUS_META[player.status]
             const isEditing = editingStatusId === player.id
             const activeDays = daysActive(player.statusFrom, player.statusTo)
-            const target = config.targets[player.category]
+            const target = targets[player.category]
             const openPct = target.openGames > 0 ? Math.round((player.openGames / target.openGames) * 100) : 0
             const privatePct = target.privateGames > 0 ? Math.round((player.privateGames / target.privateGames) * 100) : 0
 
@@ -238,7 +280,6 @@ export default function PlayerKPITargetsPage() {
                       <span style={{ fontSize: '10px', color: T.colors.textMuted, fontFamily: "'SF Mono', monospace" }}>{player.category} · {player.club}</span>
                     </div>
 
-                    {/* Open / private game progress */}
                     <div style={{ display: 'flex', gap: '16px', marginBottom: '4px' }}>
                       <span style={{ fontSize: '11px', color: T.colors.textSecondary }}>
                         Open: <strong style={{ color: openPct >= 100 ? T.colors.green : T.colors.textPrimary, fontFamily: "'SF Mono', monospace" }}>{player.openGames}/{target.openGames}</strong>
@@ -328,16 +369,6 @@ export default function PlayerKPITargetsPage() {
           })}
         </div>
 
-        <div style={{ marginTop: '24px', display: 'flex', alignItems: 'center', gap: '16px', paddingBottom: '48px' }}>
-          <button onClick={save} style={{
-            ...T.btn.primary, padding: '12px 32px',
-            background: saved ? T.colors.green : T.colors.red,
-            boxShadow: saved ? '0 0 16px rgba(34,197,94,0.3)' : T.shadow.redGlowSm,
-          }}>
-            {saved ? '✓ Saved' : 'Save KPI Targets & Status'}
-          </button>
-          {saved && <span style={{ fontSize: '13px', color: T.colors.green }}>Saved successfully</span>}
-        </div>
       </div>
     </div>
   )

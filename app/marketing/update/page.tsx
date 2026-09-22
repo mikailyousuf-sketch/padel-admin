@@ -1,12 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Megaphone, AlertCircle, Image as ImageIcon, Upload, Clock, MapPin, DollarSign, Calendar, ArrowLeft, MessageSquare, Send, ChevronDown, ChevronUp } from 'lucide-react'
 import { theme } from '../../components/theme'
+import { listActiveClubs, listFlyerCounts, listFlyersForClub, updateFlyerDraftField, resubmitFlyer, revertFlyer, sendFlyerMessage } from './actions'
 
 const T = theme
-
-const CLUB_NAMES = ['BALLITO','BEDFORDVIEW','CENTURION','DURBANVILLE','EPICENTRE','GATEWAY','GEORGE','GLEN','GROENKLOOF','HUDDLE','LORRAINE','LOURENSFORD','LONEHILL','OLD EDS','POINT','RANDPARK','WOODSTOCK']
 
 const GRADIENTS = [
   ['#e00a09', '#7a0605'], ['#a855f7', '#5b2d8a'], ['#3b82f6', '#1e4e8c'],
@@ -19,69 +18,8 @@ function clubGradient(name: string) {
   return GRADIENTS[hash]
 }
 
-type FlyerStatus = 'Live' | 'Update Needed'
-
-interface FlyerFields {
-  eventName: string
-  date: string
-  time: string
-  price: string
-  location: string
-}
-
-interface FlyerChange {
-  field: keyof FlyerFields
-  from: string
-  to: string
-}
-
-interface ChatMessage {
-  id: number
-  author: string
-  role: 'Manager' | 'Design Team'
-  text: string
-  timestamp: string
-}
-
-interface Flyer {
-  id: number
-  club: string
-  imageName: string | null
-  fields: FlyerFields
-  liveFields: FlyerFields
-  status: FlyerStatus
-  lastUpdated: string
-  messages: ChatMessage[]
-  clickupTaskId?: string
-}
-
-const MOCK_FLYERS: Flyer[] = [
-  {
-    id: 101, club: 'WOODSTOCK', imageName: 'ladies_social_v2.png',
-    fields:     { eventName: 'Ladies Social Evening', date: '2026-06-19', time: '18:00', price: 'R150', location: 'Woodstock Padel Club' },
-    liveFields: { eventName: 'Ladies Social Evening', date: '2026-06-19', time: '18:00', price: 'R150', location: 'Woodstock Padel Club' },
-    status: 'Live', lastUpdated: '2026-06-08',
-    messages: [
-      { id: 1, author: 'Sarah M', role: 'Manager', text: 'Can we make the price font a bit bigger next time? Members keep missing it.', timestamp: '2026-06-08T09:14:00' },
-      { id: 2, author: 'Design Team', role: 'Design Team', text: 'Noted, will bump it up in the next version.', timestamp: '2026-06-08T11:02:00' },
-    ],
-  },
-  {
-    id: 102, club: 'WOODSTOCK', imageName: 'sunrise_saturdays_v1.png',
-    fields:     { eventName: 'Sunrise Saturdays', date: '2026-06-21', time: '07:00', price: 'R185', location: 'Woodstock Padel Club' },
-    liveFields: { eventName: 'Sunrise Saturdays', date: '2026-06-21', time: '07:00', price: 'R185', location: 'Woodstock Padel Club' },
-    status: 'Live', lastUpdated: '2026-06-10', messages: [],
-  },
-  {
-    id: 103, club: 'CENTURION', imageName: 'corporate_tourney_v3.png',
-    fields:     { eventName: 'Corporate Tournament', date: '2026-06-02', time: '09:00', price: 'R450', location: 'Centurion Padel Club' },
-    liveFields: { eventName: 'Corporate Tournament', date: '2026-06-02', time: '09:00', price: 'R450', location: 'Centurion Padel Club' },
-    status: 'Live', lastUpdated: '2026-05-28',
-    messages: [
-      { id: 1, author: 'Design Team', role: 'Design Team', text: 'Added the 4th sponsor logo bottom right — let us know if the sizing looks off.', timestamp: '2026-05-28T14:30:00' },
-    ],
-  },
-]
+interface FlyerFields { eventName: string; date: string; time: string; price: string; location: string }
+interface FlyerChange { field: keyof FlyerFields; from: string; to: string }
 
 const FIELD_LABELS: Record<keyof FlyerFields, { label: string; icon: React.ReactNode }> = {
   eventName: { label: 'Event Name', icon: <Megaphone size={11} /> },
@@ -89,6 +27,10 @@ const FIELD_LABELS: Record<keyof FlyerFields, { label: string; icon: React.React
   time:      { label: 'Time',       icon: <Clock size={11} /> },
   price:     { label: 'Price',      icon: <DollarSign size={11} /> },
   location:  { label: 'Location',   icon: <MapPin size={11} /> },
+}
+
+const FIELD_TO_COLUMN: Record<keyof FlyerFields, string> = {
+  eventName: 'event_name', date: 'event_date', time: 'event_time', price: 'price', location: 'location',
 }
 
 function timeAgo(iso: string) {
@@ -99,46 +41,85 @@ function timeAgo(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-export default function FlyerUpdatesPage() {
-  const [flyers, setFlyers] = useState<Flyer[]>(MOCK_FLYERS)
-  const [activeClub, setActiveClub] = useState<string | null>(null)
+function toFields(row: any): FlyerFields {
+  return { eventName: row.event_name ?? '', date: row.event_date ?? '', time: row.event_time ?? '', price: row.price ?? '', location: row.location ?? '' }
+}
+function toLiveFields(row: any): FlyerFields {
+  return { eventName: row.live_event_name ?? '', date: row.live_event_date ?? '', time: row.live_event_time ?? '', price: row.live_price ?? '', location: row.live_location ?? '' }
+}
 
-  const updateFlyerField = (flyerId: number, field: keyof FlyerFields, value: string) => {
-    setFlyers(prev => prev.map(f => {
-      if (f.id !== flyerId) return f
-      const updatedFields = { ...f.fields, [field]: value }
-      const changed = JSON.stringify(updatedFields) !== JSON.stringify(f.liveFields)
-      return { ...f, fields: updatedFields, status: changed ? 'Update Needed' : 'Live' }
-    }))
+export default function FlyerUpdatesPage() {
+  const [clubs, setClubs] = useState<{ id: string; name: string }[]>([])
+  const [flyerCounts, setFlyerCounts] = useState<Record<string, { total: number; needsUpdate: number }>>({})
+  const [activeClubId, setActiveClubId] = useState<string | null>(null)
+  const [flyers, setFlyers] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function init() {
+      const c = await listActiveClubs()
+      setClubs(c)
+      const counts = await listFlyerCounts()
+      const grouped: Record<string, { total: number; needsUpdate: number }> = {}
+      counts.forEach((row: any) => {
+        if (!grouped[row.club_id]) grouped[row.club_id] = { total: 0, needsUpdate: 0 }
+        grouped[row.club_id].total += 1
+        if (row.update_needed) grouped[row.club_id].needsUpdate += 1
+      })
+      setFlyerCounts(grouped)
+      setLoading(false)
+    }
+    init()
+  }, [])
+
+  async function openClub(clubId: string) {
+    setActiveClubId(clubId)
+    const f = await listFlyersForClub(clubId)
+    setFlyers(f)
   }
 
-  const getFlyerChanges = (flyer: Flyer): FlyerChange[] => {
+  async function reloadActiveClub() {
+    if (!activeClubId) return
+    const f = await listFlyersForClub(activeClubId)
+    setFlyers(f)
+  }
+
+  async function handleFieldChange(flyerId: string, field: keyof FlyerFields, value: string) {
+    setFlyers(prev => prev.map(f => f.id === flyerId ? { ...f, [FIELD_TO_COLUMN[field]]: value } : f))
+    await updateFlyerDraftField(flyerId, FIELD_TO_COLUMN[field], value)
+    await reloadActiveClub()
+  }
+
+  async function handleResubmit(flyerId: string, fileName: string) {
+    await resubmitFlyer(flyerId, fileName)
+    await reloadActiveClub()
+  }
+
+  async function handleRevert(flyerId: string) {
+    await revertFlyer(flyerId)
+    await reloadActiveClub()
+  }
+
+  async function handleSendMessage(flyerId: string, text: string) {
+    await sendFlyerMessage(flyerId, text)
+    await reloadActiveClub()
+  }
+
+  function getFlyerChanges(row: any): FlyerChange[] {
+    const fields = toFields(row)
+    const live = toLiveFields(row)
     const changes: FlyerChange[] = []
-    Object.keys(flyer.fields).forEach(key => {
-      const k = key as keyof FlyerFields
-      if (flyer.fields[k] !== flyer.liveFields[k]) changes.push({ field: k, from: flyer.liveFields[k], to: flyer.fields[k] })
+    ;(Object.keys(fields) as (keyof FlyerFields)[]).forEach(key => {
+      if (fields[key] !== live[key]) changes.push({ field: key, from: live[key], to: fields[key] })
     })
     return changes
   }
 
-  const resubmitFlyer = (flyerId: number, newImageName: string) => {
-    setFlyers(prev => prev.map(f => f.id === flyerId
-      ? { ...f, imageName: newImageName, liveFields: { ...f.fields }, status: 'Live', lastUpdated: new Date().toISOString().split('T')[0] }
-      : f))
+  if (loading) {
+    return <div style={{ minHeight: '100vh', background: T.colors.bg, padding: '32px 36px', color: T.colors.textSecondary }}>Loading...</div>
   }
 
-  const revertFlyer = (flyerId: number) => {
-    setFlyers(prev => prev.map(f => f.id === flyerId ? { ...f, fields: { ...f.liveFields }, status: 'Live' } : f))
-  }
-
-  const sendMessage = (flyerId: number, text: string) => {
-    if (!text.trim()) return
-    setFlyers(prev => prev.map(f => f.id === flyerId
-      ? { ...f, messages: [...f.messages, { id: Date.now(), author: 'You', role: 'Manager', text, timestamp: new Date().toISOString() }] }
-      : f))
-  }
-
-  if (!activeClub) {
+  if (!activeClubId) {
     return (
       <div style={{ minHeight: '100vh', background: T.colors.bg }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 36px' }}>
@@ -150,7 +131,7 @@ export default function FlyerUpdatesPage() {
             </div>
             <h1 style={{ fontSize: '26px', fontWeight: '700', color: T.colors.textPrimary, margin: 0, letterSpacing: '-0.02em' }}>Flyer Updates</h1>
             <p style={{ fontSize: '13px', color: T.colors.textSecondary, marginTop: '5px' }}>
-              Select a club to review and update live flyers · {flyers.length} total flyers
+              Select a club to review and update live flyers
             </p>
           </div>
 
@@ -162,19 +143,18 @@ export default function FlyerUpdatesPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
-            {CLUB_NAMES.map(club => {
-              const [c1, c2] = clubGradient(club)
-              const clubFlyers = flyers.filter(f => f.club === club)
-              const needsUpdate = clubFlyers.filter(f => f.status === 'Update Needed').length
+            {clubs.map(club => {
+              const [c1, c2] = clubGradient(club.name)
+              const counts = flyerCounts[club.id] ?? { total: 0, needsUpdate: 0 }
               return (
                 <FlyerClubTile
-                  key={club}
-                  name={club}
+                  key={club.id}
+                  name={club.name.toUpperCase()}
                   gradientFrom={c1}
                   gradientTo={c2}
-                  flyerCount={clubFlyers.length}
-                  needsUpdate={needsUpdate}
-                  onClick={() => setActiveClub(club)}
+                  flyerCount={counts.total}
+                  needsUpdate={counts.needsUpdate}
+                  onClick={() => openClub(club.id)}
                 />
               )
             })}
@@ -184,14 +164,14 @@ export default function FlyerUpdatesPage() {
     )
   }
 
-  const clubFlyers = flyers.filter(f => f.club === activeClub)
-  const [c1, c2] = clubGradient(activeClub)
+  const activeClubName = clubs.find(c => c.id === activeClubId)?.name.toUpperCase() ?? ''
+  const [c1, c2] = clubGradient(activeClubName)
 
   return (
     <div style={{ minHeight: '100vh', background: T.colors.bg }}>
       <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '32px 36px' }}>
 
-        <button onClick={() => setActiveClub(null)} style={{
+        <button onClick={() => setActiveClubId(null)} style={{
           display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none',
           color: T.colors.textMuted, cursor: 'pointer', fontSize: '13px', fontFamily: 'inherit', padding: 0, marginBottom: '20px',
         }}>
@@ -203,24 +183,24 @@ export default function FlyerUpdatesPage() {
           background: `linear-gradient(135deg, ${c1}, ${c2})`,
         }}>
           <p style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 6px' }}>Flyer updates</p>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', margin: 0, letterSpacing: '-0.01em' }}>{activeClub}</h1>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', margin: 0, letterSpacing: '-0.01em' }}>{activeClubName}</h1>
         </div>
 
-        {clubFlyers.length === 0 ? (
+        {flyers.length === 0 ? (
           <div style={{ ...T.card, textAlign: 'center', padding: '32px', color: T.colors.textMuted, fontSize: '13px' }}>
             No flyers uploaded for this club yet.
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-            {clubFlyers.map(flyer => (
+            {flyers.map(row => (
               <FlyerCard
-                key={flyer.id}
-                flyer={flyer}
-                changes={getFlyerChanges(flyer)}
-                onFieldChange={(field, value) => updateFlyerField(flyer.id, field, value)}
-                onResubmit={(name) => resubmitFlyer(flyer.id, name)}
-                onRevert={() => revertFlyer(flyer.id)}
-                onSendMessage={(text) => sendMessage(flyer.id, text)}
+                key={row.id}
+                row={row}
+                changes={getFlyerChanges(row)}
+                onFieldChange={(field, value) => handleFieldChange(row.id, field, value)}
+                onResubmit={(name) => handleResubmit(row.id, name)}
+                onRevert={() => handleRevert(row.id)}
+                onSendMessage={(text) => handleSendMessage(row.id, text)}
               />
             ))}
           </div>
@@ -272,19 +252,20 @@ function FlyerClubTile({ name, gradientFrom, gradientTo, flyerCount, needsUpdate
   )
 }
 
-function FlyerCard({ flyer, changes, onFieldChange, onResubmit, onRevert, onSendMessage }: {
-  flyer: Flyer
+function FlyerCard({ row, changes, onFieldChange, onResubmit, onRevert, onSendMessage }: {
+  row: any
   changes: FlyerChange[]
   onFieldChange: (field: keyof FlyerFields, value: string) => void
   onResubmit: (newImageName: string) => void
   onRevert: () => void
   onSendMessage: (text: string) => void
 }) {
-  const needsUpdate = flyer.status === 'Update Needed'
+  const fields = toFields(row)
+  const needsUpdate = !!row.update_needed
   const [showChat, setShowChat] = useState(false)
   const [draft, setDraft] = useState('')
 
-  const handleSend = () => {
+  function handleSend() {
     if (!draft.trim()) return
     onSendMessage(draft)
     setDraft('')
@@ -305,10 +286,10 @@ function FlyerCard({ flyer, changes, onFieldChange, onResubmit, onRevert, onSend
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         flexDirection: 'column', gap: '6px',
       }}>
-        {flyer.imageName ? (
+        {row.image_url ? (
           <>
             <ImageIcon size={20} color={T.colors.textMuted} />
-            <span style={{ fontSize: '11px', color: T.colors.textMuted, fontFamily: "'SF Mono', monospace" }}>{flyer.imageName}</span>
+            <span style={{ fontSize: '11px', color: T.colors.textMuted, fontFamily: "'SF Mono', monospace" }}>{row.image_url}</span>
           </>
         ) : (
           <span style={{ fontSize: '12px', color: T.colors.textMuted, fontStyle: 'italic' }}>Awaiting design upload</span>
@@ -323,12 +304,12 @@ function FlyerCard({ flyer, changes, onFieldChange, onResubmit, onRevert, onSend
           {needsUpdate ? 'Update Needed' : 'Live'}
         </span>
         <span style={{ fontSize: '10px', color: T.colors.textMuted, fontFamily: "'SF Mono', monospace" }}>
-          {new Date(flyer.lastUpdated).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}
+          {new Date(row.updated_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}
         </span>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
-        {(Object.keys(flyer.fields) as (keyof FlyerFields)[]).map(key => {
+        {(Object.keys(fields) as (keyof FlyerFields)[]).map(key => {
           const meta = FIELD_LABELS[key]
           const isChanged = changes.some(c => c.field === key)
           return (
@@ -338,7 +319,7 @@ function FlyerCard({ flyer, changes, onFieldChange, onResubmit, onRevert, onSend
               </label>
               <input
                 type={key === 'date' ? 'date' : key === 'time' ? 'time' : 'text'}
-                value={flyer.fields[key]}
+                value={fields[key]}
                 onChange={e => onFieldChange(key, e.target.value)}
                 style={{
                   ...T.input, padding: '7px 10px', fontSize: '12px',
@@ -380,7 +361,6 @@ function FlyerCard({ flyer, changes, onFieldChange, onResubmit, onRevert, onSend
         </div>
       )}
 
-      {/* ── Notes thread ── */}
       <div style={{ borderTop: `1px solid ${T.colors.border}`, paddingTop: '10px' }}>
         <button onClick={() => setShowChat(!showChat)} style={{
           width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
@@ -388,26 +368,26 @@ function FlyerCard({ flyer, changes, onFieldChange, onResubmit, onRevert, onSend
         }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: T.colors.textSecondary }}>
             <MessageSquare size={12} />
-            Notes {flyer.messages.length > 0 && `(${flyer.messages.length})`}
+            Notes {row.messages?.length > 0 && `(${row.messages.length})`}
           </span>
           {showChat ? <ChevronUp size={12} color={T.colors.textMuted} /> : <ChevronDown size={12} color={T.colors.textMuted} />}
         </button>
 
         {showChat && (
           <div style={{ marginTop: '10px' }}>
-            {flyer.messages.length > 0 && (
+            {row.messages?.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '10px', maxHeight: '160px', overflowY: 'auto' }}>
-                {flyer.messages.map(msg => (
+                {row.messages.map((msg: any) => (
                   <div key={msg.id} style={{
-                    background: msg.role === 'Design Team' ? 'rgba(59,130,246,0.08)' : T.colors.surface,
-                    border: `1px solid ${msg.role === 'Design Team' ? 'rgba(59,130,246,0.15)' : T.colors.border}`,
+                    background: msg.role === 'design_team' ? 'rgba(59,130,246,0.08)' : T.colors.surface,
+                    border: `1px solid ${msg.role === 'design_team' ? 'rgba(59,130,246,0.15)' : T.colors.border}`,
                     borderRadius: T.radius.sm, padding: '8px 10px',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                      <span style={{ fontSize: '10px', fontWeight: '700', color: msg.role === 'Design Team' ? '#3b82f6' : T.colors.textSecondary }}>{msg.author}</span>
-                      <span style={{ fontSize: '9px', color: T.colors.textMuted, fontFamily: "'SF Mono', monospace" }}>{timeAgo(msg.timestamp)}</span>
+                      <span style={{ fontSize: '10px', fontWeight: '700', color: msg.role === 'design_team' ? '#3b82f6' : T.colors.textSecondary }}>{msg.author_name}</span>
+                      <span style={{ fontSize: '9px', color: T.colors.textMuted, fontFamily: "'SF Mono', monospace" }}>{timeAgo(msg.created_at)}</span>
                     </div>
-                    <p style={{ fontSize: '12px', color: T.colors.textSecondary, margin: 0, lineHeight: 1.4 }}>{msg.text}</p>
+                    <p style={{ fontSize: '12px', color: T.colors.textSecondary, margin: 0, lineHeight: 1.4 }}>{msg.note}</p>
                   </div>
                 ))}
               </div>

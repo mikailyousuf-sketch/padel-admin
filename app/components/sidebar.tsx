@@ -1,18 +1,24 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, BarChart2, Calendar,
   Sparkles, Settings as SettingsIcon, ChevronLeft, ChevronRight,
   ChevronDown, MessageSquare, Zap, Megaphone, ImagePlus,
-  RefreshCw, Shield, Building2, DollarSign, Coffee, Trophy,
+  RefreshCw, Shield, Building2, DollarSign, Coffee, Trophy, Users,
+  Wrench,
 } from 'lucide-react'
 import { theme } from './theme'
+import { BRAND } from '@/lib/config/brand'
+import { createClient } from '@/lib/supabase/client'
 
 const T = theme
 
+// `requires` is a permission key (e.g. 'manage_infrastructure'). Omit it for
+// links every logged-in user should see. is_hoo always sees everything
+// regardless of `requires`.
 const NAV_GROUPS = [
   {
     id: 'admin',
@@ -25,11 +31,30 @@ const NAV_GROUPS = [
     ],
   },
   {
+    id: 'maintenance',
+    label: 'Maintenance',
+    icon: Wrench,
+    items: [
+      { label: 'Maintenance',     href: '/maintenance',    icon: Wrench                                       },
+      { label: 'Infrastructure',  href: '/infrastructure', icon: Building2, requires: 'manage_infrastructure' },
+    ],
+  },
+  {
+    id: 'hr',
+    label: 'HR',
+    icon: Users,
+    items: [
+      { label: 'HR',            href: '/hr',         icon: Users                                     },
+      { label: 'HR & Finance',  href: '/hr-finance', icon: DollarSign, requires: 'manage_hr_finance'  },
+    ],
+  },
+  {
     id: 'ai',
     label: 'AI Assistant',
     icon: Sparkles,
     items: [
       { label: 'Quote Generator',      href: '/assistant/quotes',    icon: Zap           },
+      { label: 'Invoices',      href: '/assistant/invoices',    icon: Zap           },
       { label: 'WhatsApp Automation',  href: '/assistant/whatsapp',  icon: MessageSquare },
     ],
   },
@@ -40,6 +65,7 @@ const NAV_GROUPS = [
     items: [
       { label: 'New Flyer Design', href: '/marketing/new',    icon: ImagePlus  },
       { label: 'Flyer Updates',    href: '/marketing/update', icon: RefreshCw  },
+      { label: 'Team',    href: '/marketing/team', icon: RefreshCw  },
     ],
   },
   {
@@ -48,12 +74,19 @@ const NAV_GROUPS = [
     icon: SettingsIcon,
     items: [
       { label: 'Club Configuration', href: '/settings/clubs',       icon: Building2  },
-      { label: 'Revenue & Targets',  href: '/settings/revenue',     icon: DollarSign },
+      { label: 'Revenue & Targets',  href: '/settings/revenue',     icon: DollarSign, requires: 'manage_finance' },
+      { label: 'Quote Pricing', href: '/settings/quote-pricing', icon: DollarSign, requires: 'manage_finance' },
       { label: 'Catering Partners',  href: '/settings/catering',    icon: Coffee     },
       { label: 'Player KPI Targets', href: '/settings/player-kpis', icon: Trophy     },
+       { label: 'User Management',    href: '/settings/users',       icon: Users      },
     ],
   },
+  
 ]
+
+// Every permission key referenced by a `requires` field anywhere above.
+// New backend pages just need their key added here + on the nav item itself.
+const PERMISSION_KEYS_TO_CHECK = ['manage_infrastructure', 'manage_hr_finance', 'manage_finance']
 
 interface SidebarProps {
   collapsed: boolean
@@ -65,8 +98,40 @@ export default function Sidebar({ collapsed, setCollapsed, darkMode }: SidebarPr
   const pathname = usePathname()
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    admin: true, settings: false, ai: false, marketing: false,
+    admin: true, maintenance: true, hr: true, settings: false, ai: false, marketing: false,
   })
+
+  // Backend-only links (Infrastructure, HR & Finance, and anything else that
+  // gets a `requires` key in future) are hidden until we know the caller
+  // qualifies — same is_hoo / has_permission checks as the route guards,
+  // just run client-side so the sidebar can decide what to even show.
+  const [isHoo, setIsHoo] = useState(false)
+  const [grantedPermissions, setGrantedPermissions] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    const supabase = createClient()
+    async function loadAccess() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: hoo } = await supabase.rpc('is_hoo', { p_user_id: user.id })
+      if (hoo) {
+        setIsHoo(true)
+        return
+      }
+
+      const results = await Promise.all(
+        PERMISSION_KEYS_TO_CHECK.map(key => supabase.rpc('has_permission', { p_user_id: user.id, p_key: key }))
+      )
+      const granted = new Set(
+        PERMISSION_KEYS_TO_CHECK.filter((_, idx) => results[idx].data === true)
+      )
+      setGrantedPermissions(granted)
+    }
+    loadAccess()
+  }, [])
+
+  const canSee = (requires?: string) => !requires || isHoo || grantedPermissions.has(requires)
 
   const toggleGroup = (id: string) => {
     setOpenGroups(prev => ({ ...prev, [id]: !prev[id] }))
@@ -105,11 +170,11 @@ export default function Sidebar({ collapsed, setCollapsed, darkMode }: SidebarPr
             justifyContent: 'center', color: '#fff', fontWeight: '700',
             fontSize: '13px', flexShrink: 0,
             boxShadow: T.shadow.redGlowSm,
-          }}>P</div>
+          }}>{BRAND.name.charAt(0)}</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-            <span style={{ color: T.colors.red, fontWeight: '700', fontSize: '12px', letterSpacing: '0.1em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Virgin Active</span>
-            <span style={{ color: '#333', fontWeight: '500', fontSize: '10px', letterSpacing: '0.08em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Padel Club Manager</span>
+            <span style={{ color: T.colors.red, fontWeight: '700', fontSize: '12px', letterSpacing: '0.1em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{BRAND.name}</span>
+            <span style={{ color: '#333', fontWeight: '500', fontSize: '10px', letterSpacing: '0.08em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{BRAND.productName}</span>
           </div>
         )}
       </div>
@@ -117,9 +182,12 @@ export default function Sidebar({ collapsed, setCollapsed, darkMode }: SidebarPr
       {/* ── Nav groups ── */}
       <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto', overflowX: 'hidden' }}>
         {NAV_GROUPS.map(group => {
+          const visibleItems = group.items.filter(item => canSee((item as any).requires))
+          if (visibleItems.length === 0) return null
+
           const isGroupOpen  = openGroups[group.id]
           const GroupIcon    = group.icon
-          const hasActive    = group.items.some(item => pathname === item.href)
+          const hasActive    = visibleItems.some(item => pathname === item.href)
 
           return (
             <div key={group.id} style={{ marginBottom: '4px' }}>
@@ -167,7 +235,7 @@ export default function Sidebar({ collapsed, setCollapsed, darkMode }: SidebarPr
 
               {(isGroupOpen || collapsed) && (
                 <div style={{ paddingLeft: collapsed ? '0' : '8px', overflow: 'hidden' }}>
-                  {group.items.map(({ label, href, icon: Icon }) => {
+                  {visibleItems.map(({ label, href, icon: Icon }) => {
                     const active = pathname === href
                     return (
                       <Link key={href} href={href} style={{ textDecoration: 'none' }}>

@@ -1,6 +1,7 @@
 import { Montserrat } from 'next/font/google'
 import './globals.css'
 import LayoutShell from './components/layout-shell'
+import { BRAND } from '@/lib/config/brand'
 
 const montserrat = Montserrat({
   subsets: ['latin'],
@@ -8,8 +9,8 @@ const montserrat = Montserrat({
 })
 
 export const metadata = {
-  title: 'Virgin Active Padel — Club Manager',
-  description: 'Club operations platform',
+  title: `${BRAND.name} ${BRAND.productName}`,
+  description: BRAND.tagline,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

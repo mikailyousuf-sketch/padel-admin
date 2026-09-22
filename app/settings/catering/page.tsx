@@ -1,32 +1,19 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronUp, Coffee } from 'lucide-react'
+import { ChevronDown, ChevronUp, Coffee, AlertTriangle } from 'lucide-react'
 import { theme } from '../../components/theme'
+import { createClient } from '@/lib/supabase/client'
 
 const T = theme
 
-const defaultClubs = [
-  { id: 1,  name: 'Ballito',     cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 2,  name: 'Bedfordview', cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 3,  name: 'Centurion',   cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 4,  name: 'Durbanville', cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 5,  name: 'Epicentre',   cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 6,  name: 'Gateway',     cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 7,  name: 'George',      cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 8,  name: 'Glen',        cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 9,  name: 'Groenkloof',  cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 10, name: 'Huddle',      cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 11, name: 'Lorraine',    cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 12, name: 'Lourensford', cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 13, name: 'Lonehill',    cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 14, name: 'Old Eds',     cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 15, name: 'Point',       cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 16, name: 'Randpark',    cafeName: '', cafeEmail: '', cafePhone: '' },
-  { id: 17, name: 'Woodstock',   cafeName: '', cafeEmail: '', cafePhone: '' },
-]
-
-type CateringConfig = typeof defaultClubs[0]
+interface CateringConfig {
+  club_id: string
+  name: string
+  cafe_name: string
+  cafe_email: string
+  cafe_phone: string
+}
 
 const lbl: React.CSSProperties = {
   fontSize: '11px', fontWeight: '600', color: T.colors.textSecondary,
@@ -38,32 +25,95 @@ const groupTitle: React.CSSProperties = {
   marginBottom: '14px', paddingBottom: '8px', borderBottom: `1px solid ${T.colors.border}`,
 }
 
-// Local storage key — namespaced separately. The Quote Generator reads cafeName/cafeEmail
-// from this key when a quote includes catering, to reference + CC the cafe automatically.
-const STORAGE_KEY = 'padel_catering_config'
-
 export default function CateringPartnersPage() {
-  const [clubs, setClubs] = useState<CateringConfig[]>(defaultClubs)
-  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const supabase = createClient()
+  const [clubs, setClubs] = useState<CateringConfig[]>([])
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set())
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) setClubs(JSON.parse(stored))
+    async function load() {
+      const { data, error } = await supabase
+        .from('catering_partners')
+        .select('club_id, name, email, phone, clubs!inner(name, is_active)')
+        .eq('clubs.is_active', true)
+        .order('clubs(name)')
+
+      if (error) {
+        console.error(error)
+        setLoading(false)
+        return
+      }
+
+      setClubs(
+        (data ?? []).map((row: any) => ({
+          club_id: row.club_id,
+          name: row.clubs?.name ?? '',
+          cafe_name: row.name ?? '',
+          cafe_email: row.email ?? '',
+          cafe_phone: row.phone ?? '',
+        }))
+      )
+      setLoading(false)
+    }
+    load()
   }, [])
 
-  const update = (id: number, field: string, value: string) => {
-    setClubs(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c))
+  const update = (clubId: string, field: keyof CateringConfig, value: string) => {
+    setClubs(prev => prev.map(c => c.club_id === clubId ? { ...c, [field]: value } : c))
+    setDirtyIds(prev => new Set(prev).add(clubId))
     setSaved(false)
+    setSaveError(null)
   }
 
-  const save = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(clubs))
+  const save = async () => {
+    setSaveError(null)
+    const updates = clubs.filter(c => dirtyIds.has(c.club_id))
+    if (updates.length === 0) {
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+      return
+    }
+
+    const results = await Promise.all(
+      updates.map(c =>
+        supabase
+          .from('catering_partners')
+          .update({
+            name: c.cafe_name,
+            email: c.cafe_email,
+            phone: c.cafe_phone,
+          })
+          .eq('club_id', c.club_id)
+      )
+    )
+
+    const failed = results.find(r => r.error)
+    if (failed?.error) {
+      console.error(failed.error)
+      // Writes here are scoped to has_club_access — a blocked save almost
+      // always means you're trying to edit a club that isn't yours.
+      setSaveError(
+        failed.error.code === '42501' || failed.error.message.toLowerCase().includes('policy')
+          ? "You can only edit catering details for your own club."
+          : `Save failed: ${failed.error.message}`
+      )
+      return
+    }
+
+    setDirtyIds(new Set())
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
 
-  const configuredCount = clubs.filter(c => c.cafeName).length
+  if (loading) {
+    return <div style={{ minHeight: '100vh', background: T.colors.bg, padding: '32px 36px', color: T.colors.textSecondary }}>Loading...</div>
+  }
+
+  const configuredCount = clubs.filter(c => c.cafe_name).length
 
   return (
     <div style={{ minHeight: '100vh', background: T.colors.bg }}>
@@ -76,11 +126,10 @@ export default function CateringPartnersPage() {
           </div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: T.colors.textPrimary, margin: 0, letterSpacing: '-0.02em' }}>Catering Partners</h1>
           <p style={{ fontSize: '13px', color: T.colors.textSecondary, marginTop: '5px' }}>
-            {configuredCount} of 17 clubs have an on-site cafe configured
+            {configuredCount} of {clubs.length} clubs have an on-site cafe configured
           </p>
         </div>
 
-        {/* ── Explainer ── */}
         <div style={{ ...T.card, marginBottom: '20px', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <Coffee size={16} color={T.colors.textMuted} />
           <p style={{ fontSize: '12px', color: T.colors.textMuted, margin: 0 }}>
@@ -88,7 +137,6 @@ export default function CateringPartnersPage() {
           </p>
         </div>
 
-        {/* ── Table header ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '32px 1fr 1fr 28px', padding: '0 16px', marginBottom: '8px' }}>
           {['', 'Club', 'Cafe Partner', ''].map((h, i) => (
             <span key={i} style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{h}</span>
@@ -96,18 +144,18 @@ export default function CateringPartnersPage() {
         </div>
 
         {clubs.map((club, idx) => {
-          const isOpen = expandedId === club.id
-          const hasCafe = !!club.cafeName
+          const isOpen = expandedId === club.club_id
+          const hasCafe = !!club.cafe_name
 
           return (
-            <div key={club.id} style={{
+            <div key={club.club_id} style={{
               background: T.colors.surface, borderRadius: T.radius.md, marginBottom: '4px',
               overflow: 'hidden', border: `1px solid ${isOpen ? T.colors.red : T.colors.border}`,
               boxShadow: isOpen ? T.shadow.redGlowSm : 'none',
               transition: 'border-color 0.2s ease',
             }}>
 
-              <button onClick={() => setExpandedId(isOpen ? null : club.id)} style={{
+              <button onClick={() => setExpandedId(isOpen ? null : club.club_id)} style={{
                 width: '100%', padding: '12px 16px',
                 display: 'grid', gridTemplateColumns: '32px 1fr 1fr 28px',
                 alignItems: 'center', background: isOpen ? T.colors.surfaceRaised : 'none',
@@ -121,7 +169,7 @@ export default function CateringPartnersPage() {
                     display: 'inline-flex', alignItems: 'center', gap: '6px',
                   }}>
                     <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: T.colors.green, flexShrink: 0 }} />
-                    {club.cafeName}
+                    {club.cafe_name}
                   </span>
                 ) : (
                   <span style={{ fontSize: '12px', color: T.colors.textMuted, fontStyle: 'italic' }}>Not configured</span>
@@ -135,21 +183,21 @@ export default function CateringPartnersPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px' }}>
                     <div>
                       <label style={lbl}>Cafe / Caterer Name</label>
-                      <input value={club.cafeName} placeholder="e.g. Bean There Cafe" style={T.input}
-                        onChange={e => update(club.id, 'cafeName', e.target.value)} />
+                      <input value={club.cafe_name} placeholder="e.g. Bean There Cafe" style={T.input}
+                        onChange={e => update(club.club_id, 'cafe_name', e.target.value)} />
                     </div>
                     <div>
                       <label style={lbl}>Contact Email</label>
-                      <input type="email" value={club.cafeEmail} placeholder="cafe@email.com" style={T.input}
-                        onChange={e => update(club.id, 'cafeEmail', e.target.value)} />
+                      <input type="email" value={club.cafe_email} placeholder="cafe@email.com" style={T.input}
+                        onChange={e => update(club.club_id, 'cafe_email', e.target.value)} />
                     </div>
                     <div>
                       <label style={lbl}>Contact Phone</label>
-                      <input value={club.cafePhone} placeholder="082 000 0000" style={T.input}
-                        onChange={e => update(club.id, 'cafePhone', e.target.value)} />
+                      <input value={club.cafe_phone} placeholder="082 000 0000" style={T.input}
+                        onChange={e => update(club.club_id, 'cafe_phone', e.target.value)} />
                     </div>
                   </div>
-                  {!club.cafeName && (
+                  {!club.cafe_name && (
                     <p style={{ fontSize: '11px', color: T.colors.textMuted, margin: '14px 0 0', fontStyle: 'italic' }}>
                       Leave blank if this club has no on-site catering partner. Quotes for this club won't show a catering reference.
                     </p>
@@ -160,6 +208,17 @@ export default function CateringPartnersPage() {
           )
         })}
 
+        {saveError && (
+          <div style={{
+            marginTop: '16px', padding: '12px 16px', borderRadius: T.radius.md,
+            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+            display: 'flex', alignItems: 'center', gap: '10px',
+          }}>
+            <AlertTriangle size={15} color={T.colors.redStatus} style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '13px', color: T.colors.textSecondary }}>{saveError}</span>
+          </div>
+        )}
+
         <div style={{ marginTop: '24px', display: 'flex', alignItems: 'center', gap: '16px', paddingBottom: '48px' }}>
           <button onClick={save} style={{
             ...T.btn.primary, padding: '12px 32px',
@@ -168,7 +227,7 @@ export default function CateringPartnersPage() {
           }}>
             {saved ? '✓ Saved' : 'Save Catering Partners'}
           </button>
-          {saved && <span style={{ fontSize: '13px', color: T.colors.green }}>All 17 clubs saved</span>}
+          {saved && <span style={{ fontSize: '13px', color: T.colors.green }}>All clubs saved</span>}
         </div>
       </div>
     </div>

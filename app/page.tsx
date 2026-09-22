@@ -4,13 +4,11 @@ import { useState, useEffect, useRef } from 'react'
 import { Users, Calendar, TrendingUp, Clock, ChevronDown, ChevronUp, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { theme } from './components/theme'
+import { createClient } from '@/lib/supabase/client'
+import { getSelectedScope } from '@/lib/scope/actions'
+import { COMPANY_SCOPE } from '@/lib/scope/constants'
 
 const T = theme
-
-const DEFAULT_PEAK_MORNING_START = '06:00'
-const DEFAULT_PEAK_MORNING_END   = '10:00'
-const DEFAULT_PEAK_EVENING_START = '15:00'
-const DEFAULT_PEAK_EVENING_END   = '23:00'
 
 function formatTimeLabel(t: string) {
   const [h, m] = t.split(':').map(Number)
@@ -29,6 +27,7 @@ function getLiveTime() {
   return new Date().toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
 }
 
+// TODO: real booking distribution requires Playtomic API access — mock until then.
 const peakChartData = [
   { day: 'Mon', peak: 85, offpeak: 40 },
   { day: 'Tue', peak: 60, offpeak: 30 },
@@ -39,6 +38,8 @@ const peakChartData = [
   { day: 'Sun', peak: 80, offpeak: 55 },
 ]
 
+// TODO: needs per-event cost/expense tracking, which lives on the Events page,
+// not event_quotes. Wire this up once that page's schema is confirmed.
 const mockEvents = [
   { name: 'Corporate Tournament',  revenue: 18500, cost: 6200,  date: '2 Jun'  },
   { name: 'Club Championship',     revenue: 12000, cost: 4500,  date: '18 May' },
@@ -46,8 +47,6 @@ const mockEvents = [
   { name: 'Junior Academy Day',    revenue: 6500,  cost: 2800,  date: '3 May'  },
 ]
 
-// ── All stat cards — scrollable carousel ─────────────────────────────────────
-// Each card can navigate to a specific page/section on click
 type StatCardData = {
   label: string
   value: string
@@ -60,7 +59,6 @@ type StatCardData = {
 
 type OpenState = { overview: boolean; peak: boolean; events: boolean }
 
-// ── Section wrapper ──────────────────────────────────────────────────────────
 function Section({ title, open, onToggle, badge, children }: {
   title: string; open: boolean
   onToggle: () => void; badge?: string; children: React.ReactNode
@@ -89,7 +87,6 @@ function Section({ title, open, onToggle, badge, children }: {
   )
 }
 
-// ── Individual stat card ─────────────────────────────────────────────────────
 function StatCard({ card, active, onClick }: { card: StatCardData; active: boolean; onClick: () => void }) {
   const router = useRouter()
   const [hovered, setHovered] = useState(false)
@@ -123,7 +120,6 @@ function StatCard({ card, active, onClick }: { card: StatCardData; active: boole
         width: '220px',
       }}
     >
-      {/* Top accent line */}
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: '2px',
         background: card.isRed || active
@@ -172,6 +168,8 @@ function StatCard({ card, active, onClick }: { card: StatCardData; active: boole
 }
 
 export default function Home() {
+  const supabase = createClient()
+  const router = useRouter()
   const [open, setOpen]           = useState<OpenState>({ overview: true, peak: true, events: true })
   const [time, setTime]           = useState(getLiveTime())
   const [mounted, setMounted]     = useState(false)
@@ -182,11 +180,14 @@ export default function Home() {
   const autoSlideRef              = useRef<NodeJS.Timeout | null>(null)
 
   const [peakTimes, setPeakTimes] = useState({
-    morningStart: DEFAULT_PEAK_MORNING_START,
-    morningEnd:   DEFAULT_PEAK_MORNING_END,
-    eveningStart: DEFAULT_PEAK_EVENING_START,
-    eveningEnd:   DEFAULT_PEAK_EVENING_END,
+    morningStart: '06:00',
+    morningEnd:   '10:00',
+    eveningStart: '15:00',
+    eveningEnd:   '22:00',
   })
+  const [eventsThisMonth, setEventsThisMonth] = useState(0)
+  const [monthlyRevenue, setMonthlyRevenue] = useState(0)
+  const [scopeIsCompany, setScopeIsCompany] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -195,22 +196,70 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('padel_clubs')
-      if (saved) {
-        const clubs = JSON.parse(saved)
-        const club = clubs[0]
-        if (club) setPeakTimes({
-          morningStart: club.peakMorningStart || DEFAULT_PEAK_MORNING_START,
-          morningEnd:   club.peakMorningEnd   || DEFAULT_PEAK_MORNING_END,
-          eveningStart: club.peakEveningStart || DEFAULT_PEAK_EVENING_START,
-          eveningEnd:   club.peakEveningEnd   || DEFAULT_PEAK_EVENING_END,
+    async function load() {
+      // The choice made at /select-club — a specific club_id, or the
+      // company-wide sentinel. If nobody's chosen yet (e.g. cookies were
+      // cleared, or someone landed on '/' directly), send them there first
+      // rather than silently guessing which club to show.
+      const scope = await getSelectedScope()
+      if (!scope) {
+        router.push('/select-club')
+        return
+      }
+      const isCompany = scope === COMPANY_SCOPE
+      setScopeIsCompany(isCompany)
+
+      // Peak window — for a specific club, pull that club's config directly.
+      // For company-wide, there's no single "peak window" that makes sense
+      // to show, so this falls back to whichever club RLS returns first,
+      // purely as a representative sample — the UI below labels it as such.
+      const peakQuery = supabase
+        .from('club_config')
+        .select('peak_morning_start, peak_morning_end, peak_evening_start, peak_evening_end, clubs(name)')
+
+      const { data: configRows } = isCompany
+        ? await peakQuery.order('clubs(name)').limit(1)
+        : await peakQuery.eq('club_id', scope).limit(1)
+
+      if (configRows && configRows[0]) {
+        const row: any = configRows[0]
+        setPeakTimes({
+          morningStart: row.peak_morning_start,
+          morningEnd: row.peak_morning_end,
+          eveningStart: row.peak_evening_start,
+          eveningEnd: row.peak_evening_end,
         })
       }
-    } catch {}
+
+      // Events this month + monthly revenue — real, from event_quotes.
+      // Company-wide: RLS already scopes this to every club the user can
+      // access, so no explicit club filter = correctly aggregated across
+      // all of them. Single club: filter explicitly to that club_id.
+      const now = new Date()
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
+
+      let quoteQuery = supabase
+        .from('event_quotes')
+        .select('total, status, event_date')
+        .in('status', ['invoiced', 'sent', 'paid'])
+        .gte('event_date', monthStart)
+        .lte('event_date', monthEnd)
+
+      if (!isCompany) {
+        quoteQuery = quoteQuery.eq('club_id', scope)
+      }
+
+      const { data: quoteRows } = await quoteQuery
+
+      if (quoteRows) {
+        setEventsThisMonth(quoteRows.length)
+        setMonthlyRevenue(quoteRows.reduce((sum, q) => sum + (q.total ?? 0), 0))
+      }
+    }
+    load()
   }, [])
 
-  // Auto-slide every 4 seconds
   useEffect(() => {
     autoSlideRef.current = setInterval(() => {
       setActiveCard(prev => (prev + 1) % stats.length)
@@ -218,7 +267,6 @@ export default function Home() {
     return () => { if (autoSlideRef.current) clearInterval(autoSlideRef.current) }
   }, [])
 
-  // Scroll carousel to active card
   useEffect(() => {
     if (scrollRef.current) {
       const card = scrollRef.current.children[activeCard] as HTMLElement
@@ -250,19 +298,17 @@ export default function Home() {
     { label: "Today's Bookings",  value: '24',   change: '↑ 3 more than yesterday',  icon: 'calendar', isRed: true,  href: '/reports', detail: 'Tap to view reports' },
     { label: 'Court Occupancy',   value: '78%',  change: '↑ Above weekly average',   icon: 'trending', isRed: false, href: '/reports', detail: 'Tap to view occupancy' },
     { label: 'Active Players',    value: '186',  change: 'This month',               icon: 'users',    isRed: true,  href: '/reports', detail: 'Tap to view player tracker' },
-    { label: 'Next Peak Window',  value: formatTimeLabel(peakTimes.eveningStart), change: peakLabel, icon: 'clock', isRed: false, detail: `Off-peak: ${offPeakLabel}` },
-    { label: 'Events This Month', value: '4',    change: '↑ 1 more than last month', icon: 'zap',      isRed: true,  href: '/events',  detail: 'Tap to view events' },
-    { label: 'Monthly Revenue',   value: 'R 42k', change: '↑ 12% vs last month',    icon: 'trending', isRed: false, href: '/reports', detail: 'Tap to view revenue' },
+    { label: 'Next Peak Window',  value: formatTimeLabel(peakTimes.eveningStart), change: peakLabel, icon: 'clock', isRed: false, detail: scopeIsCompany ? `Varies by club · Off-peak: ${offPeakLabel}` : `Off-peak: ${offPeakLabel}` },
+    { label: 'Events This Month', value: String(eventsThisMonth), change: 'Invoiced, sent or paid', icon: 'zap', isRed: true, href: '/events', detail: 'Tap to view events' },
+    { label: 'Monthly Revenue',   value: `R ${Math.round(monthlyRevenue / 1000)}k`, change: 'From event quotes this month', icon: 'trending', isRed: false, href: '/reports', detail: 'Tap to view revenue' },
   ]
 
-  // Active card detail panel
   const active = stats[activeCard]
 
   return (
     <div style={{ minHeight: '100vh', background: T.colors.bg }}>
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 36px' }}>
 
-        {/* ── Page header ── */}
         <div style={{ marginBottom: '36px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
@@ -272,6 +318,11 @@ export default function Home() {
                 animation: 'pulse 2s infinite',
               }} />
               <span style={{ fontSize: '11px', color: T.colors.red, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Live</span>
+              {scopeIsCompany && (
+                <span style={{ fontSize: '10px', color: T.colors.textMuted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.08em', marginLeft: '4px' }}>
+                  · Entire Company
+                </span>
+              )}
             </div>
             <h1 style={{ fontSize: '26px', fontWeight: '700', color: T.colors.textPrimary, margin: 0, letterSpacing: '-0.02em' }}>
               Club Dashboard
@@ -280,7 +331,6 @@ export default function Home() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* Live clock */}
             <div style={{
               padding: '8px 16px', borderRadius: T.radius.md,
               background: T.colors.surface, border: `1px solid ${T.colors.border}`,
@@ -291,7 +341,6 @@ export default function Home() {
               {mounted ? time : '--:--'}
             </div>
 
-            {/* AI quick button */}
             <button
               onClick={() => setShowAI(!showAI)}
               style={{
@@ -307,7 +356,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* ── AI Quick Panel ── */}
         {showAI && (
           <div style={{
             ...T.card,
@@ -325,7 +373,6 @@ export default function Home() {
               <button onClick={() => setShowAI(false)} style={{ background: 'none', border: 'none', color: T.colors.textMuted, cursor: 'pointer', fontSize: '16px', padding: 0 }}>×</button>
             </div>
 
-            {/* Mode tabs */}
             <div style={{ display: 'flex', gap: '6px', marginBottom: '16px' }}>
               {([['quote', 'Generate Quote'], ['whatsapp', 'WhatsApp Alert']] as const).map(([mode, label]) => (
                 <button key={mode} onClick={() => setAiMode(mode)} style={{
@@ -385,12 +432,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── Today's Overview — Scrollable carousel ── */}
         <Section title="Today's Overview" open={open.overview} onToggle={() => toggle('overview')} badge="Live">
-
-          {/* Carousel */}
           <div style={{ position: 'relative' }}>
-            {/* Scroll container */}
             <div
               ref={scrollRef}
               style={{
@@ -412,13 +455,10 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Fade edges */}
             <div style={{ position: 'absolute', top: 0, right: 0, bottom: '4px', width: '48px', background: `linear-gradient(to left, ${T.colors.surface}, transparent)`, pointerEvents: 'none', borderRadius: T.radius.lg }} />
           </div>
 
-          {/* Controls row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
-            {/* Dot indicators */}
             <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
               {stats.map((_, idx) => (
                 <button key={idx} onClick={() => goTo(idx)} style={{
@@ -432,7 +472,6 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Prev / Next */}
             <div style={{ display: 'flex', gap: '6px' }}>
               <button onClick={prev} style={{
                 ...T.btn.ghost, padding: '6px 10px',
@@ -449,7 +488,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Active card detail strip */}
           <div style={{
             marginTop: '14px', padding: '12px 16px',
             background: T.colors.bg, border: `1px solid ${T.colors.border}`,
@@ -470,7 +508,6 @@ export default function Home() {
           </div>
         </Section>
 
-        {/* ── Peak vs Off-Peak ── */}
         <Section title="Peak vs Off-Peak — This Week" open={open.peak} onToggle={() => toggle('peak')}>
           <div style={{ display: 'flex', gap: '20px', marginBottom: '24px' }}>
             {[
@@ -509,7 +546,6 @@ export default function Home() {
           </div>
         </Section>
 
-        {/* ── Event P&L ── */}
         <Section title="Event P&L — This Month" open={open.events} onToggle={() => toggle('events')}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px 110px 110px', marginBottom: '8px', padding: '0 14px' }}>
             {['Event', 'Revenue', 'Cost', 'Profit'].map((h, i) => (
@@ -547,7 +583,6 @@ export default function Home() {
 
       </div>
 
-      {/* Keyframes */}
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(224,10,9,0.4); }
