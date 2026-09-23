@@ -71,3 +71,14 @@ test('Excel preserves actual dates, club isolation and missing data', async () =
   assert.equal(sheet.getRow(4).getCell(1).value, 'Club B')
   assert.equal(sheet.getRow(4).getCell(9).value, null)
 })
+
+const { validateCampaign, previewMessage } = require('../lib/whatsapp/campaign.ts')
+test('WhatsApp schedules validate times, tokens and event dates', () => {
+  const valid = { title: 'Evening', template: 'Hi {{club}} {{availability}}', kind: 'availability', times: ['08:00'], weekdays: [1], scheduledAt: null, windowStart: '06:00', windowEnd: '23:00' }
+  validateCampaign(valid)
+  assert.throws(() => validateCampaign({ ...valid, times: ['25:00'] }), /send times/)
+  assert.throws(() => validateCampaign({ ...valid, weekdays: [] }), /weekday/)
+  assert.throws(() => validateCampaign({ ...valid, template: '{{secret}}' }), /Unknown placeholder/)
+  assert.throws(() => validateCampaign({ ...valid, kind: 'event', scheduledAt: '2020-01-01T09:00:00+02:00' }), /future/)
+  assert.equal(previewMessage('Hi {{club}}', { club: 'Test' }), 'Hi Test')
+})

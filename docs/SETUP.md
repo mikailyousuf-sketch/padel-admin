@@ -23,6 +23,7 @@ Apply, in order, to a staging database containing the existing application schem
 4. `supabase/migrations/202609230001_profile_security.sql`
 5. `supabase/migrations/202609230002_permission_catalog.sql`
 6. `supabase/migrations/202609230003_managed_user_setup.sql`
+7. `supabase/migrations/202609230004_whatsapp_campaigns.sql`
 
 Use the existing migration workflow if one is already used by the company. These
 files are transactional and should be applied once. They do not recreate the
@@ -136,3 +137,5 @@ are superseded. No new database migration is required for this UI/export change.
 The Playtomic feed is still pending implementation and credentials. Users can
 export a blank branded workbook to review the established layout without inventing
 occupancy or revenue. Existing archives are retained unchanged.
+
+WhatsApp campaign setup and human checks: see `docs/WHATSAPP.md`.

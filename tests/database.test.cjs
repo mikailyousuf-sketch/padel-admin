@@ -28,7 +28,7 @@ test('database migrations, access rules and atomic corrections', async t => {
     create function storage.foldername(name text) returns text[] language sql immutable as $$ select string_to_array(name,'/') $$;
     alter table storage.objects enable row level security;
     grant select,insert,delete on storage.objects to authenticated;
-    grant select on public.event_quotes to authenticated;
+    grant select on public.event_quotes, public.clubs to authenticated;
     insert into auth.users values('${userA}'),('${userB}');
     insert into public.clubs values('${clubA}','Club A'),('${clubB}','Club B');
     insert into public.profiles(id,is_hoo) values('${userA}',false),('${userB}',false);
@@ -74,6 +74,18 @@ test('database migrations, access rules and atomic corrections', async t => {
     assert.equal(latest.rows.length, 1); assert.equal(latest.rows[0].courts[0].net_revenue_cents, 500)
     await db.exec('delete from storage.objects')
     assert.equal((await db.query('select * from storage.objects')).rows.length, 2)
+  })
+  await t.test('WhatsApp drafts are scoped, audited and cannot be marked live', async () => {
+    await login(userA)
+    const result = await db.query(`insert into whatsapp_campaigns(club_id,title,kind,template,destination_label,schedule,created_by) values($1,'Evening','availability','Hello {{club}}','Players','{}',$2) returning id`, [clubA,userA])
+    const id = result.rows[0].id
+    assert.equal((await db.query('select * from whatsapp_campaign_history')).rows.length,1)
+    await assert.rejects(db.query("update whatsapp_campaigns set status='active' where id=$1",[id]), /check constraint/)
+    await login(userB)
+    assert.equal((await db.query('select * from whatsapp_campaigns')).rows.length,0)
+    assert.equal((await db.query('select * from whatsapp_campaign_history')).rows.length,0)
+    await assert.rejects(db.query(`insert into whatsapp_campaigns(club_id,title,kind,template,destination_label,schedule,created_by) values($1,'Bad','event','Hello','Group','{}',$2)`, [clubA,userB]), /row-level security/)
+    await login(userA)
   })
   await t.test('AI rate limit rejects sixth request for this user', async () => {
     for (let i = 0; i < 5; i++) assert.equal((await db.query('select consume_ai_request() as allowed')).rows[0].allowed, true)
