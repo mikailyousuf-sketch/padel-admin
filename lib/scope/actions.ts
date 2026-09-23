@@ -2,7 +2,8 @@
 
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { SCOPE_COOKIE } from './constants'
+import { getClubAccess } from '@/lib/auth/club-access'
+import { COMPANY_SCOPE, SCOPE_COOKIE } from './constants'
 
 /**
  * Sets the person's chosen scope (a specific club_id, or the company-wide
@@ -15,11 +16,21 @@ import { SCOPE_COOKIE } from './constants'
  * this cookie is purely "what does this person want to look at right now."
  */
 export async function selectScope(value: string) {
+  const { client, global, clubIds } = await getClubAccess()
+  if (value === COMPANY_SCOPE) {
+    if (!global) throw new Error('Company-wide access is not enabled for your account.')
+  } else {
+    if (!global && !clubIds.includes(value)) throw new Error('This club is not assigned to you.')
+    const { data, error } = await client.from('clubs').select('id').eq('id', value).eq('is_active', true).single()
+    if (error || !data) throw new Error('This club is unavailable.')
+  }
   const cookieStore = await cookies()
   cookieStore.set(SCOPE_COOKIE, value, {
     path: '/',
     maxAge: 60 * 60 * 24 * 30, // 30 days
     sameSite: 'lax',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
   })
   redirect('/')
 }

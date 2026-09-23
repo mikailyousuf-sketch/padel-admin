@@ -1,25 +1,6 @@
 import ExcelJS from 'exceljs'
-import { BRAND } from '@/lib/config/brand'
+import { BRAND } from '../../lib/config/brand'
 
-const clubs = [
-  { name: 'BALLITO', courts: 3, pickle: 0 },
-  { name: 'BEDFORDVIEW', courts: 3, pickle: 0 },
-  { name: 'CENTURION', courts: 4, pickle: 0 },
-  { name: 'DURBANVILLE', courts: 3, pickle: 0 },
-  { name: 'EPICENTRE', courts: 5, pickle: 0 },
-  { name: 'GATEWAY', courts: 6, pickle: 0 },
-  { name: 'GEORGE', courts: 3, pickle: 0 },
-  { name: 'GLEN', courts: 3, pickle: 3 },
-  { name: 'GROENKLOOF', courts: 5, pickle: 0 },
-  { name: 'HUDDLE', courts: 6, pickle: 0 },
-  { name: 'LORRAINE', courts: 2, pickle: 0 },
-  { name: 'LOURENSFORD', courts: 4, pickle: 2 },
-  { name: 'LONEHILL', courts: 4, pickle: 0 },
-  { name: 'OLD EDS', courts: 4, pickle: 0 },
-  { name: 'POINT', courts: 4, pickle: 3 },
-  { name: 'RANDPARK', courts: 4, pickle: 0 },
-  { name: 'WOODSTOCK', courts: 3, pickle: 0 },
-]
 
 const VAT = 1.15
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -34,15 +15,15 @@ const WHITE = 'FFFFFFFF'
 const GREEN = 'FF16A34A'
 
 function getDayOfWeek(date: Date): string {
-  return DAYS[date.getDay() === 0 ? 6 : date.getDay() - 1]
+  return DAYS[date.getUTCDay() === 0 ? 6 : date.getUTCDay() - 1]
 }
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const days: Date[] = []
-  const d = new Date(year, month, 1)
-  while (d.getMonth() === month) {
+  const d = new Date(Date.UTC(year, month, 1))
+  while (d.getUTCMonth() === month) {
     days.push(new Date(d))
-    d.setDate(d.getDate() + 1)
+    d.setUTCDate(d.getUTCDate() + 1)
   }
   return days
 }
@@ -70,6 +51,7 @@ function styleCell(cell: ExcelJS.Cell, bg = WHITE, bold = false, align: ExcelJS.
 interface DayData {
   date: Date
   occupancy: number | null
+  availableMinutes?: number
   revenue: number | null
   pickleOccupancy?: number | null
   comments?: string
@@ -109,13 +91,15 @@ export async function generateOccupancyExcel(
   month: number,
   year: number,
   clubData: { [clubName: string]: DayData[] },
-  clubConfigs: ClubConfig[]
+  clubConfigs: ClubConfig[],
+  summaryDate?: Date
 ): Promise<Blob> {
+  const clubs = clubConfigs.map(config => ({ ...config, name: config.name.toUpperCase() }))
   const workbook = new ExcelJS.Workbook()
   workbook.creator = BRAND.name
   workbook.created = new Date()
 
-  const monthName = new Date(year, month, 1).toLocaleString('default', { month: 'long' }).toUpperCase()
+  const monthName = new Date(Date.UTC(year, month, 1)).toLocaleString('en-ZA', { month: 'long', timeZone: 'UTC' }).toUpperCase()
   const days = getDaysInMonth(year, month)
 
   const summary = workbook.addWorksheet('DAILY SUMMARY', {
@@ -151,25 +135,27 @@ export async function generateOccupancyExcel(
     { key: 'courts', width: 8 },
   ]
 
-  const today = new Date(year, month, new Date().getDate())
+  const today = summaryDate ?? new Date(Date.UTC(year, month + 1, 0))
+  let hasRevenue = false
   let totalRevenue = 0
   let totalTarget = 0
+  let hasTarget = false
   let weightedOccupancyNumerator = 0
   let totalCourts = 0
-  let pickleOccupancyValues: number[] = []
+  const pickleOccupancyValues: number[] = []
 
   clubs.forEach((club, idx) => {
     const row = summary.getRow(idx + 2)
     const config = clubConfigs.find(c => c.name.toUpperCase() === club.name) || {}
     const data = clubData[club.name]
     const todayData = data?.find(d =>
-      d.date.getDate() === today.getDate() &&
-      d.date.getMonth() === today.getMonth()
+      d.date.getUTCDate() === today.getUTCDate() &&
+      d.date.getUTCMonth() === today.getUTCMonth()
     )
 
     const revInc = todayData?.revenue ?? null
     const target = (config as ClubConfig).dailyTarget ?? null
-    const revExc = revInc ? Math.round(revInc / VAT) : null
+    const revExc = revInc !== null ? Math.round(revInc / VAT * 100) / 100 : null
     const occ = todayData?.occupancy ?? null
     const pickle = todayData?.pickleOccupancy ?? null
 
@@ -184,11 +170,12 @@ export async function generateOccupancyExcel(
     row.getCell(8).value = todayData?.comments ?? ''
     row.getCell(12).value = club.courts
 
-    if (revInc) totalRevenue += revInc
-    if (target) totalTarget += target
+    if (revInc !== null) { totalRevenue += revInc; hasRevenue = true }
+    if (target !== null) { totalTarget += target; hasTarget = true }
     if (occ !== null) {
-      weightedOccupancyNumerator += occ * club.courts
-      totalCourts += club.courts
+      const weight = todayData?.availableMinutes ?? club.courts
+      weightedOccupancyNumerator += occ * weight
+      totalCourts += weight
     }
     if (pickle !== null && club.pickle > 0) pickleOccupancyValues.push(pickle)
 
@@ -204,9 +191,9 @@ export async function generateOccupancyExcel(
   totalRow.getCell(2).value = today
   totalRow.getCell(2).numFmt = 'dd/mm/yyyy'
   totalRow.getCell(3).value = totalCourts > 0 ? Math.round(weightedOccupancyNumerator / totalCourts) : null
-  totalRow.getCell(4).value = totalRevenue
-  totalRow.getCell(5).value = totalTarget
-  totalRow.getCell(6).value = Math.round(totalRevenue / VAT)
+  totalRow.getCell(4).value = hasRevenue ? totalRevenue : null
+  totalRow.getCell(5).value = hasTarget ? totalTarget : null
+  totalRow.getCell(6).value = hasRevenue ? Math.round(totalRevenue / VAT * 100) / 100 : null
   totalRow.getCell(7).value = pickleOccupancyValues.length > 0
     ? Math.round(pickleOccupancyValues.reduce((a, b) => a + b, 0) / pickleOccupancyValues.length)
     : null
@@ -216,21 +203,23 @@ export async function generateOccupancyExcel(
   }
 
   const noteRow = summary.getRow(clubs.length + 4)
-  noteRow.getCell(1).value = '* Playtomic formula being Booked Hours / Club Opening Hours * Number of Courts'
+  noteRow.getCell(1).value = '* Occupancy = booked court minutes / available court minutes. Missing data is excluded.'
   noteRow.getCell(1).font = { italic: true, size: 9 }
 
   const weightedRow = summary.getRow(clubs.length + 5)
-  weightedRow.getCell(11).value = 'WEIGHTED OCCUPANCY (# Courts)'
+  weightedRow.getCell(11).value = 'CAPACITY-WEIGHTED OCCUPANCY'
   weightedRow.getCell(12).value = totalCourts > 0 ? Math.round(weightedOccupancyNumerator / totalCourts) : null
   weightedRow.getCell(11).font = { bold: true, size: 9 }
 
   clubs.forEach(club => {
-    const ws = workbook.addWorksheet(`${club.name}_${monthName}`, {
+    let tabName = `${club.name.replace(/[\[\]:*?\/\\]/g, '-')}_${monthName}`.slice(0, 31)
+    if (workbook.getWorksheet(tabName)) tabName = tabName.slice(0, 26) + `_${clubs.indexOf(club) + 1}`
+    const ws = workbook.addWorksheet(tabName, {
       pageSetup: { orientation: 'landscape', fitToPage: true }
     })
 
     const hasPickle = club.pickle > 0
-    const data = clubData[club.name] || []
+    const data = (clubData[club.name] || []).filter(d => d.date.getUTCFullYear() === year && d.date.getUTCMonth() === month)
     const config = clubConfigs.find(c => c.name.toUpperCase() === club.name)
 
     const headers = ['', 'Date', 'Percentage', 'Daily Revenue',
@@ -272,7 +261,7 @@ export async function generateOccupancyExcel(
 
     days.forEach((date, idx) => {
       const dayName = getDayOfWeek(date)
-      const rowData = data.find(d => d.date.getDate() === date.getDate())
+      const rowData = data.find(d => d.date.getUTCDate() === date.getUTCDate())
       const row = ws.getRow(idx + 2)
       const bg = idx % 2 === 0 ? WHITE : LIGHT_GRAY
 
@@ -301,20 +290,22 @@ export async function generateOccupancyExcel(
     const overallRowIdx = days.length + 2
     const overallRow = ws.getRow(overallRowIdx)
     const validData = data.filter(d => d.occupancy !== null)
-    const avgOccupancy = validData.length > 0
-      ? validData.reduce((a, d) => a + (d.occupancy ?? 0), 0) / validData.length
-      : 0
-    const totalRev = data.reduce((a, d) => a + (d.revenue ?? 0), 0)
+    const capacity = validData.reduce((a, d) => a + (d.availableMinutes ?? 1), 0)
+    const avgOccupancy = capacity > 0
+      ? validData.reduce((a, d) => a + (d.occupancy ?? 0) * (d.availableMinutes ?? 1), 0) / capacity
+      : null
+    const totalRev = data.some(d => d.revenue !== null) ? data.reduce((a, d) => a + (d.revenue ?? 0), 0) : null
 
     overallRow.getCell(1).value = 'Overall'
     overallRow.getCell(2).value = ''
-    overallRow.getCell(3).value = Math.round(avgOccupancy * 100) / 100
+    overallRow.getCell(3).value = avgOccupancy === null ? null : Math.round(avgOccupancy * 100) / 100
     overallRow.getCell(4).value = totalRev
 
     DAYS.forEach((day, i) => {
       const dayData = data.filter(d => getDayOfWeek(d.date) === day && d.occupancy !== null)
       if (dayData.length > 0) {
-        const avg = dayData.reduce((a, d) => a + (d.occupancy ?? 0), 0) / dayData.length
+        const capacity = dayData.reduce((a, d) => a + (d.availableMinutes ?? 1), 0)
+        const avg = capacity > 0 ? dayData.reduce((a, d) => a + (d.occupancy ?? 0) * (d.availableMinutes ?? 1), 0) / capacity : 0
         overallRow.getCell(5 + i).value = Math.round(avg * 100) / 100
       }
     })
@@ -345,14 +336,14 @@ export async function generateOccupancyExcel(
       styleHeader(rrrRow.getCell(c), DARK)
     }
 
-    const today2 = new Date()
-    const daysElapsed = today2.getMonth() === month && today2.getFullYear() === year
-      ? today2.getDate()
+    const today2 = summaryDate ?? new Date()
+    const daysElapsed = today2.getUTCMonth() === month && today2.getUTCFullYear() === year
+      ? today2.getUTCDate()
       : days.length
     const daysLeft = days.length - daysElapsed
     const pctDays = daysElapsed / days.length
-    const pctAchieved = monthlyTarget ? totalRev / monthlyTarget : null
-    const stillRequired = monthlyTarget ? monthlyTarget - totalRev : null
+    const pctAchieved = monthlyTarget ? (totalRev ?? 0) / monthlyTarget : null
+    const stillRequired = monthlyTarget ? monthlyTarget - (totalRev ?? 0) : null
     const rrr = daysLeft > 0 && stillRequired ? stillRequired / daysLeft : 0
 
     const rrrDataRow = ws.getRow(rrrRowIdx + 1)
@@ -370,18 +361,19 @@ export async function generateOccupancyExcel(
 
     DAYS.forEach((day, i) => {
       const dayData = data.filter(d => getDayOfWeek(d.date) === day && d.occupancy !== null)
-      const avg = dayData.length > 0
-        ? dayData.reduce((a, d) => a + (d.occupancy ?? 0), 0) / dayData.length
+      const dayCapacity = dayData.reduce((a, d) => a + (d.availableMinutes ?? 1), 0)
+      const avg = dayCapacity > 0
+        ? dayData.reduce((a, d) => a + (d.occupancy ?? 0) * (d.availableMinutes ?? 1), 0) / dayCapacity
         : null
 
       ws.getCell(dowStartRow + 1 + i, 10).value = day
-      ws.getCell(dowStartRow + 1 + i, 11).value = avg ? Math.round(avg * 100) / 100 : null
+      ws.getCell(dowStartRow + 1 + i, 11).value = avg !== null ? Math.round(avg * 100) / 100 : null
       styleCell(ws.getCell(dowStartRow + 1 + i, 10), WHITE, false, 'left')
       styleCell(ws.getCell(dowStartRow + 1 + i, 11))
     })
 
     ws.getCell(dowStartRow + 8, 10).value = 'Overall'
-    ws.getCell(dowStartRow + 8, 11).value = Math.round(avgOccupancy * 100) / 100
+    ws.getCell(dowStartRow + 8, 11).value = avgOccupancy === null ? null : Math.round(avgOccupancy * 100) / 100
     styleHeader(ws.getCell(dowStartRow + 8, 10), DARK)
     styleHeader(ws.getCell(dowStartRow + 8, 11), DARK)
   })

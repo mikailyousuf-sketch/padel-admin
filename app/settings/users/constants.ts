@@ -1,7 +1,9 @@
 export const PERMISSION_KEYS = [
   'all_clubs_access',
   'manage_finance',
-  'manage_hr',
+  'manage_hr', // Legacy permission retained for existing accounts.
+  'manage_hr_finance',
+  'manage_infrastructure',
   'manage_marketing',
   'manage_utilisation',
   'manage_kpi_targets',
@@ -16,9 +18,14 @@ export const ROLE_PRESETS = {
     description: 'Access limited to assigned club(s) only.',
   },
   hr: {
-    label: 'HR',
-    permissions: ['manage_hr', 'all_clubs_access'],
-    description: 'Player/staff roster access across all clubs.',
+    label: 'HR & Staff Finance',
+    permissions: ['manage_hr_finance', 'all_clubs_access'],
+    description: 'Staff records, leave, incidents and staff compensation across all clubs.',
+  },
+  infrastructure: {
+    label: 'Infrastructure',
+    permissions: ['manage_infrastructure', 'all_clubs_access'],
+    description: 'Maintenance requests and club upgrades across all clubs.',
   },
   finance: {
     label: 'Finance',
@@ -28,7 +35,7 @@ export const ROLE_PRESETS = {
   utilisation: {
     label: 'Head of Utilisation',
     permissions: ['manage_utilisation', 'approve_discounts', 'all_clubs_access'],
-    description: 'Occupancy/utilisation reports + discount & quote approval across all clubs.',
+    description: 'Occupancy/utilisation reports and discount approval across all clubs.',
   },
   marketing: {
     label: 'Marketing',
@@ -42,7 +49,7 @@ export type RolePresetKey = keyof typeof ROLE_PRESETS
 // Reverse lookup: given a permission set, find which preset it matches (for display)
 export function matchRolePreset(permissions: string[]): string {
   const sorted = [...permissions].sort().join(',')
-  for (const [key, preset] of Object.entries(ROLE_PRESETS)) {
+  for (const preset of Object.values(ROLE_PRESETS)) {
     if ([...preset.permissions].sort().join(',') === sorted) {
       return preset.label
     }

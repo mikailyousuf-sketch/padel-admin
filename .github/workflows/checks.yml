@@ -1,0 +1,25 @@
+name: Platform checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: build-check-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - name: Lint new reporting and API code
+        run: npx eslint app/page.tsx app/reports/OccupancyPanel.tsx app/reports/page.tsx app/reports/data-actions.ts app/api/reports/export/route.ts app/api/generate/route.ts app/assistant/invoices app/settings/users/role-selector.tsx app/settings/page.tsx lib/supabase/admin.ts lib/reporting proxy.ts
+      - run: npm run build

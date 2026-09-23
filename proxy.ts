@@ -23,8 +23,16 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  // Refreshes the session if expired
-  await supabase.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
+  const path = request.nextUrl.pathname
+  const publicPaths = ['/login', '/forgot-password', '/reset-password']
+  if (!user && !publicPaths.includes(path)) {
+    const response = path.startsWith('/api/')
+      ? NextResponse.json({ error: 'Authentication required' }, { status: 401 })
+      : NextResponse.redirect(new URL('/login', request.url))
+    supabaseResponse.cookies.getAll().forEach(cookie => response.cookies.set(cookie))
+    return response
+  }
 
   return supabaseResponse
 }

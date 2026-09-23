@@ -2,94 +2,17 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { generateOccupancyExcel } from '../lib/exportExcel'
-import { ChevronDown, ChevronUp, Download, AlertTriangle } from 'lucide-react'
+import OccupancyPanel from './OccupancyPanel'
 import { theme } from '../components/theme'
 import { getSelectedScope } from '@/lib/scope/actions'
+import { currentMonthRange, businessDate } from '@/lib/reporting/dates'
 import { COMPANY_SCOPE } from '@/lib/scope/constants'
 import {
-  listEventsForScope, listPlayersForScope, listKpiTargets, getClubConfigForScope,
+  listEventsForScope, listPlayersForScope, listKpiTargets,
   type ReportEventRow, type ReportPlayerRow, type KpiTargetRow,
 } from './actions'
 
 const T = theme
-
-const DEFAULT_PEAK_MORNING_START = '06:00'
-const DEFAULT_PEAK_MORNING_END   = '10:00'
-const DEFAULT_PEAK_EVENING_START = '15:00'
-const DEFAULT_PEAK_EVENING_END   = '23:00'
-
-function formatTimeLabel(t: string) {
-  const [h, m] = t.split(':').map(Number)
-  const ampm = h >= 12 ? 'pm' : 'am'
-  const hour = h % 12 || 12
-  return `${hour}${m > 0 ? `:${String(m).padStart(2, '0')}` : ''}${ampm}`
-}
-
-const PERIODS = ['Today', 'Yesterday', 'Past Week', 'Past Month', 'Custom']
-
-// ── Occupancy & Revenue — still mock. Real occupancy % requires Playtomic
-// API access, which isn't set up yet (same status as WhatsApp automation).
-// Labeled honestly in the UI below rather than left looking live.
-const occupancyData: { [key: string]: { label: string; occupancy: number; peak: number; offpeak: number; revenue: number; target: number }[] } = {
-  'Today': [
-    { label: 'Court 1', occupancy: 60, peak: 80, offpeak: 40, revenue: 2800, target: 3200 },
-    { label: 'Court 2', occupancy: 45, peak: 65, offpeak: 25, revenue: 2100, target: 3200 },
-    { label: 'Court 3', occupancy: 70, peak: 90, offpeak: 50, revenue: 3200, target: 3200 },
-    { label: 'Court 4', occupancy: 30, peak: 45, offpeak: 15, revenue: 1400, target: 3200 },
-  ],
-  'Yesterday': [
-    { label: 'Court 1', occupancy: 82, peak: 95, offpeak: 68, revenue: 4200, target: 3200 },
-    { label: 'Court 2', occupancy: 76, peak: 88, offpeak: 62, revenue: 3800, target: 3200 },
-    { label: 'Court 3', occupancy: 90, peak: 100, offpeak: 78, revenue: 4500, target: 3200 },
-    { label: 'Court 4', occupancy: 65, peak: 80, offpeak: 48, revenue: 3200, target: 3200 },
-  ],
-  'Past Week': [
-    { label: 'Monday',    occupancy: 70,  peak: 88,  offpeak: 50, revenue: 12400, target: 10686 },
-    { label: 'Tuesday',   occupancy: 55,  peak: 72,  offpeak: 36, revenue: 9800,  target: 10686 },
-    { label: 'Wednesday', occupancy: 80,  peak: 95,  offpeak: 62, revenue: 14200, target: 10686 },
-    { label: 'Thursday',  occupancy: 75,  peak: 90,  offpeak: 58, revenue: 13100, target: 10686 },
-    { label: 'Friday',    occupancy: 95,  peak: 100, offpeak: 88, revenue: 18600, target: 10686 },
-    { label: 'Saturday',  occupancy: 100, peak: 100, offpeak: 100, revenue: 21000, target: 10686 },
-    { label: 'Sunday',    occupancy: 88,  peak: 96,  offpeak: 78, revenue: 17400, target: 10686 },
-  ],
-  'Past Month': [
-    { label: 'Week 1', occupancy: 72, peak: 85, offpeak: 55, revenue: 68400,  target: 74802 },
-    { label: 'Week 2', occupancy: 78, peak: 90, offpeak: 62, revenue: 74200,  target: 74802 },
-    { label: 'Week 3', occupancy: 85, peak: 95, offpeak: 70, revenue: 81600,  target: 74802 },
-    { label: 'Week 4', occupancy: 91, peak: 98, offpeak: 80, revenue: 87800,  target: 74802 },
-  ],
-  'Custom': [
-    { label: 'Court 1', occupancy: 75, peak: 88, offpeak: 60, revenue: 3600, target: 3200 },
-    { label: 'Court 2', occupancy: 68, peak: 80, offpeak: 54, revenue: 3200, target: 3200 },
-  ],
-}
-
-const clubs = [
-  { name: 'BALLITO',     courts: 3, pickle: 0 },
-  { name: 'BEDFORDVIEW', courts: 3, pickle: 0 },
-  { name: 'CENTURION',   courts: 4, pickle: 0 },
-  { name: 'DURBANVILLE', courts: 3, pickle: 0 },
-  { name: 'EPICENTRE',   courts: 5, pickle: 0 },
-  { name: 'GATEWAY',     courts: 6, pickle: 0 },
-  { name: 'GEORGE',      courts: 3, pickle: 0 },
-  { name: 'GLEN',        courts: 3, pickle: 3 },
-  { name: 'GROENKLOOF',  courts: 5, pickle: 0 },
-  { name: 'HUDDLE',      courts: 6, pickle: 0 },
-  { name: 'LORRAINE',    courts: 2, pickle: 0 },
-  { name: 'LOURENSFORD', courts: 4, pickle: 2 },
-  { name: 'LONEHILL',    courts: 4, pickle: 0 },
-  { name: 'OLD EDS',     courts: 4, pickle: 0 },
-  { name: 'POINT',       courts: 4, pickle: 3 },
-  { name: 'RANDPARK',    courts: 4, pickle: 0 },
-  { name: 'WOODSTOCK',   courts: 3, pickle: 0 },
-]
-
-const defaultConfig = {
-  name: '',
-  peakMorningStart: DEFAULT_PEAK_MORNING_START, peakMorningEnd: DEFAULT_PEAK_MORNING_END,
-  peakEveningStart: DEFAULT_PEAK_EVENING_START, peakEveningEnd: DEFAULT_PEAK_EVENING_END,
-}
 
 const CATEGORY_LABELS: Record<string, string> = { staff: 'Staff', ambassador: 'Ambassadors' }
 const PLAYER_CATEGORIES = ['staff', 'ambassador'] as const
@@ -109,20 +32,13 @@ function calcEventFinancials(e: ReportEventRow) {
   const pl = revenue - totalExp + sponsorTotal
   const royalty = revenue * (e.royalty_rate ?? 0.06)
   const net = pl - royalty
-  const isCompleted = new Date(e.event_date) < new Date(new Date().toDateString())
+  const isCompleted = e.event_date < businessDate()
   return { revenue, totalExp, sponsorTotal, pl, royalty, net, status: isCompleted ? 'Completed' : 'Upcoming' }
 }
 
 export default function Reports() {
   const router = useRouter()
-  const [occPeriod, setOccPeriod]           = useState('Yesterday')
-  const [customRange, setCustomRange]       = useState({ from: '', to: '' })
-  const [appliedRange, setAppliedRange]     = useState({ from: '', to: '' })
-  const [showCustom, setShowCustom]         = useState(false)
-  const [showPeakBars, setShowPeakBars]     = useState(false)
-  const [clubConfig, setClubConfig]         = useState(defaultConfig)
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
-  const [mounted, setMounted]               = useState(false)
 
   const [scope, setScope]           = useState<string | null>(null)
   const [loadingReal, setLoadingReal] = useState(true)
@@ -130,7 +46,7 @@ export default function Reports() {
   const [realPlayers, setRealPlayers] = useState<ReportPlayerRow[]>([])
   const [kpiTargets, setKpiTargets]   = useState<KpiTargetRow[]>([])
 
-  useEffect(() => { setMounted(true) }, [])
+  const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
     async function load() {
@@ -139,68 +55,22 @@ export default function Reports() {
       setScope(s)
 
       const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
+      const { from: monthStart, to: monthEnd } = currentMonthRange(now)
 
-      const [events, players, targets, config] = await Promise.all([
+      const [events, players, targets] = await Promise.all([
         listEventsForScope(s, monthStart, monthEnd),
         listPlayersForScope(s),
         listKpiTargets(),
-        getClubConfigForScope(s),
       ])
 
       setRealEvents(events)
       setRealPlayers(players)
       setKpiTargets(targets)
 
-      if (config) {
-        const c: any = config
-        setClubConfig({
-          name: c.clubs?.name ?? '',
-          peakMorningStart: c.peak_morning_start ?? DEFAULT_PEAK_MORNING_START,
-          peakMorningEnd: c.peak_morning_end ?? DEFAULT_PEAK_MORNING_END,
-          peakEveningStart: c.peak_evening_start ?? DEFAULT_PEAK_EVENING_START,
-          peakEveningEnd: c.peak_evening_end ?? DEFAULT_PEAK_EVENING_END,
-        })
-      }
-
       setLoadingReal(false)
     }
-    load()
+    load().catch(() => { setLoadError('Unable to load events and player KPIs. Please refresh or contact your administrator.'); setLoadingReal(false) })
   }, [router])
-
-  const exportOccupancyToExcel = async () => {
-    const now = new Date(), month = now.getMonth(), year = now.getFullYear()
-    const clubData: { [key: string]: any[] } = {}
-    clubs.forEach(club => {
-      clubData[club.name] = (rows).map((row, i) => ({
-        date: new Date(year, month, i + 1), occupancy: row.occupancy,
-        revenue: row.revenue, pickleOccupancy: null, comments: '',
-      }))
-    })
-    const configs = clubs.map(c => ({ name: c.name, courts: c.courts, pickle: c.pickle, dailyTarget: c.name === 'WOODSTOCK' ? 10686 : 8000 }))
-    const blob = await generateOccupancyExcel(month, year, clubData, configs)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `Occupancy_${now.toLocaleString('default', { month: 'long' })}_${year}.xlsx`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  // ── Occupancy (mock) ──────────────────────────────────────────────────────
-  const rows     = occupancyData[occPeriod] ?? []
-  const avgOcc   = Math.round(rows.reduce((a, r) => a + r.occupancy, 0) / (rows.length || 1))
-  const totalRev = rows.reduce((a, r) => a + r.revenue, 0)
-  const totalTarget = rows.reduce((a, r) => a + r.target, 0)
-  const highestOcc = rows.length ? Math.max(...rows.map(r => r.occupancy)) : 0
-  const lowestOcc  = rows.length ? Math.min(...rows.map(r => r.occupancy)) : 0
-  const targetPct  = totalTarget > 0 ? Math.round((totalRev / totalTarget) * 100) : 0
-  const highestRow = rows.find(r => r.occupancy === highestOcc)
-  const lowestRow  = rows.find(r => r.occupancy === lowestOcc)
-
-  const occColor = (v: number) => v >= 80 ? T.colors.green : v >= 60 ? T.colors.amber : T.colors.red
-  const occGlow  = (v: number) => `0 0 8px ${occColor(v)}55`
 
   // ── Event P&L (real) ──────────────────────────────────────────────────────
   const eventsWithFinancials = useMemo(
@@ -228,8 +98,6 @@ export default function Reports() {
   }, 0)
   const overallPct = totalTarget2 > 0 ? Math.round((totalGames / totalTarget2) * 100) : 0
 
-  const peakLabel    = `${formatTimeLabel(clubConfig.peakMorningStart)}–${formatTimeLabel(clubConfig.peakMorningEnd)} & ${formatTimeLabel(clubConfig.peakEveningStart)}–${formatTimeLabel(clubConfig.peakEveningEnd)}`
-  const offPeakLabel = `${formatTimeLabel(clubConfig.peakMorningEnd)}–${formatTimeLabel(clubConfig.peakEveningStart)}`
   const scopeIsCompany = scope === COMPANY_SCOPE
 
   return (
@@ -245,202 +113,12 @@ export default function Reports() {
           <h1 style={{ fontSize: '26px', fontWeight: '700', color: T.colors.textPrimary, margin: 0, letterSpacing: '-0.02em' }}>Reports</h1>
           <p style={{ fontSize: '13px', color: T.colors.textSecondary, marginTop: '5px' }}>
             Occupancy, revenue, event summaries and player tracking
-            {!scopeIsCompany && clubConfig.name && ` · ${clubConfig.name}`}
             {scopeIsCompany && ' · Entire Company'}
           </p>
         </div>
 
-        {/* ══ 1. OCCUPANCY & REVENUE (mock — Playtomic-pending) ═══════════ */}
-        <div style={darkCard}>
-
-          <div style={{ padding: '20px 24px', borderBottom: `1px solid ${T.colors.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13px', fontWeight: '600', color: T.colors.textPrimary }}>Occupancy &amp; Revenue</span>
-              <span style={{
-                display: 'flex', alignItems: 'center', gap: '5px',
-                fontSize: '10px', fontWeight: '600', color: T.colors.amber,
-                background: T.colors.amberGlow, border: '1px solid rgba(245,158,11,0.25)',
-                borderRadius: '999px', padding: '3px 10px', textTransform: 'uppercase', letterSpacing: '0.05em',
-              }}>
-                <AlertTriangle size={11} /> Awaiting Playtomic Integration
-              </span>
-              <button onClick={exportOccupancyToExcel} style={{ ...T.btn.secondary, padding: '5px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Download size={12} /> Export
-              </button>
-              <button onClick={() => setShowPeakBars(!showPeakBars)} style={{
-                ...T.btn.ghost, padding: '5px 12px', fontSize: '11px',
-                background: showPeakBars ? T.colors.redGlow : 'transparent',
-                color: showPeakBars ? T.colors.red : T.colors.textMuted,
-                border: `1px solid ${showPeakBars ? 'rgba(224,10,9,0.3)' : T.colors.border}`,
-              }}>
-                {showPeakBars ? 'Peak View ✓' : 'Peak View'}
-              </button>
-            </div>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {PERIODS.map(p => (
-                <button key={p} onClick={() => { setOccPeriod(p); setShowCustom(p === 'Custom') }}
-                  style={{ ...T.periodBtn(occPeriod === p), fontSize: '11px', padding: '5px 12px' }}>
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <p style={{ fontSize: '11px', color: T.colors.textMuted, margin: 0, padding: '10px 24px 0' }}>
-            Sample data shown below for layout purposes only — not real occupancy figures. Wires up once Playtomic API access is available.
-          </p>
-
-          {showCustom && (
-            <div style={{ padding: '14px 24px', borderBottom: `1px solid ${T.colors.border}`, display: 'flex', gap: '12px', alignItems: 'center', background: T.colors.surfaceRaised, marginTop: '14px' }}>
-              <span style={{ fontSize: '11px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Range</span>
-              <input type="date" value={customRange.from}
-                onChange={e => setCustomRange(p => ({ ...p, from: e.target.value }))}
-                style={{ ...T.input, width: '160px', padding: '7px 10px', fontSize: '13px' }} />
-              <span style={{ fontSize: '12px', color: T.colors.textMuted }}>→</span>
-              <input type="date" value={customRange.to}
-                onChange={e => setCustomRange(p => ({ ...p, to: e.target.value }))}
-                style={{ ...T.input, width: '160px', padding: '7px 10px', fontSize: '13px' }} />
-              <button
-                onClick={() => { setAppliedRange(customRange) }}
-                style={{ ...T.btn.primary, padding: '7px 18px', fontSize: '12px' }}
-              >Apply</button>
-              {appliedRange.from && appliedRange.to && (
-                <span style={{ fontSize: '12px', color: T.colors.green, fontFamily: "'SF Mono', monospace" }}>
-                  ✓ {appliedRange.from} → {appliedRange.to}
-                </span>
-              )}
-            </div>
-          )}
-
-          {rows.length > 0 && (
-            <div style={{ padding: '14px 24px', borderBottom: `1px solid ${T.colors.border}`, display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0', marginTop: '14px' }}>
-              {[
-                { label: 'Avg Occupancy', value: `${avgOcc}%`,  color: occColor(avgOcc), glow: true },
-                { label: 'Highest',       value: `${highestOcc}% ${highestRow ? `(${highestRow.label})` : ''}`, color: T.colors.green, glow: false },
-                { label: 'Lowest',        value: `${lowestOcc}% ${lowestRow ? `(${lowestRow.label})` : ''}`,   color: lowestOcc < 60 ? T.colors.red : T.colors.amber, glow: false },
-                { label: 'Total Revenue', value: `R ${totalRev.toLocaleString()}`, color: T.colors.green, glow: true },
-                { label: 'vs Target',     value: `${targetPct}%`, color: targetPct >= 100 ? T.colors.green : targetPct >= 80 ? T.colors.amber : T.colors.red, glow: false },
-              ].map((s, i, arr) => (
-                <div key={s.label} style={{ padding: '0 16px', borderRight: i < arr.length - 1 ? `1px solid ${T.colors.border}` : 'none' }}>
-                  <p style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', margin: '0 0 4px' }}>{s.label}</p>
-                  <p style={{ fontSize: '14px', fontWeight: '700', color: s.color, margin: 0, fontFamily: "'SF Mono', monospace", textShadow: s.glow ? `0 0 10px ${s.color}55` : 'none' }}>{s.value}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {totalTarget > 0 && (
-            <div style={{ padding: '10px 24px', borderBottom: `1px solid ${T.colors.border}`, display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', whiteSpace: 'nowrap' }}>Revenue vs Target</span>
-              <div style={{ flex: 1, background: T.colors.border, borderRadius: '4px', height: '6px', overflow: 'hidden', position: 'relative' }}>
-                <div style={{
-                  width: `${Math.min(targetPct, 100)}%`, height: '6px', borderRadius: '4px',
-                  background: targetPct >= 100 ? T.colors.green : targetPct >= 80 ? T.colors.amber : T.colors.red,
-                  boxShadow: `0 0 8px ${(targetPct >= 100 ? T.colors.green : targetPct >= 80 ? T.colors.amber : T.colors.red)}55`,
-                  transition: 'width 0.6s cubic-bezier(0.4,0,0.2,1)',
-                }} />
-                <div style={{ position: 'absolute', top: 0, right: 0, width: '2px', height: '100%', background: T.colors.borderBright }} />
-              </div>
-              <span style={{ fontSize: '11px', fontWeight: '700', color: targetPct >= 100 ? T.colors.green : T.colors.amber, fontFamily: "'SF Mono', monospace", whiteSpace: 'nowrap' }}>
-                R {totalRev.toLocaleString()} / R {totalTarget.toLocaleString()}
-              </span>
-            </div>
-          )}
-
-          <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: showPeakBars ? '110px 1fr 1fr 140px' : '110px 1fr 140px', gap: '16px', padding: '0 16px', marginBottom: '4px' }}>
-              <span style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Label</span>
-              {showPeakBars ? (
-                <>
-                  <span style={{ fontSize: '10px', color: T.colors.red, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Peak ({peakLabel})</span>
-                  <span style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Off-Peak ({offPeakLabel})</span>
-                </>
-              ) : (
-                <span style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Occupancy</span>
-              )}
-              <span style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', textAlign: 'right' }}>Revenue</span>
-            </div>
-
-            {rows.map((row, idx) => (
-              <div key={row.label} style={{
-                display: 'grid',
-                gridTemplateColumns: showPeakBars ? '110px 1fr 1fr 140px' : '110px 1fr 140px',
-                alignItems: 'center', gap: '16px',
-                padding: '14px 16px',
-                background: idx % 2 === 0 ? T.colors.surfaceRaised : T.colors.surface,
-                border: `1px solid ${T.colors.border}`,
-                borderRadius: T.radius.md,
-                opacity: mounted ? 1 : 0,
-                transform: mounted ? 'none' : 'translateY(6px)',
-                transition: `opacity 0.3s ease ${idx * 40}ms, transform 0.3s ease ${idx * 40}ms`,
-              }}>
-                <span style={{ fontSize: '13px', fontWeight: '600', color: T.colors.textPrimary, fontFamily: "'SF Mono', monospace" }}>{row.label}</span>
-
-                {showPeakBars ? (
-                  <>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                        <span style={{ fontSize: '10px', color: T.colors.textMuted }}>Peak</span>
-                        <span style={{ fontSize: '12px', fontWeight: '700', color: T.colors.red, textShadow: T.shadow.redGlowSm }}>{row.peak}%</span>
-                      </div>
-                      <div style={{ background: T.colors.border, borderRadius: '4px', height: '6px', overflow: 'hidden' }}>
-                        <div style={{ width: `${row.peak}%`, height: '6px', borderRadius: '4px', background: `linear-gradient(90deg, ${T.colors.red}, rgba(224,10,9,0.5))`, boxShadow: '0 0 6px rgba(224,10,9,0.4)', transition: 'width 0.6s ease' }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                        <span style={{ fontSize: '10px', color: T.colors.textMuted }}>Off-Peak</span>
-                        <span style={{ fontSize: '12px', fontWeight: '700', color: T.colors.textSecondary }}>{row.offpeak}%</span>
-                      </div>
-                      <div style={{ background: T.colors.border, borderRadius: '4px', height: '6px', overflow: 'hidden' }}>
-                        <div style={{ width: `${row.offpeak}%`, height: '6px', borderRadius: '4px', background: T.colors.borderBright, transition: 'width 0.6s ease 0.1s' }} />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                      <span style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Occupancy</span>
-                      <span style={{ fontSize: '12px', fontWeight: '700', color: occColor(row.occupancy), textShadow: occGlow(row.occupancy) }}>{row.occupancy}%</span>
-                    </div>
-                    <div style={{ background: T.colors.border, borderRadius: '4px', height: '6px', overflow: 'hidden' }}>
-                      <div style={{ width: `${row.occupancy}%`, height: '6px', borderRadius: '4px', background: occColor(row.occupancy), boxShadow: occGlow(row.occupancy), transition: 'width 0.6s cubic-bezier(0.4,0,0.2,1)' }} />
-                    </div>
-                    <div style={{ position: 'relative', marginTop: '3px', height: '4px' }}>
-                      <div style={{ position: 'absolute', left: `${Math.min((row.target / (row.target * 1.2)) * 100, 100)}%`, top: 0, width: '2px', height: '4px', background: T.colors.borderBright, borderRadius: '1px' }} />
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ textAlign: 'right' }}>
-                  <p style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 3px' }}>Revenue</p>
-                  <p style={{ fontSize: '15px', fontWeight: '700', color: T.colors.textPrimary, margin: 0, fontFamily: "'SF Mono', monospace" }}>R {row.revenue.toLocaleString()}</p>
-                  {row.target > 0 && (
-                    <p style={{ fontSize: '10px', color: row.revenue >= row.target ? T.colors.green : T.colors.textMuted, margin: '2px 0 0', fontFamily: "'SF Mono', monospace" }}>
-                      {row.revenue >= row.target ? '↑' : '↓'} target R {row.target.toLocaleString()}
-                    </p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ margin: '0 24px 24px', padding: '14px 20px', borderRadius: T.radius.md, background: T.colors.surfaceRaised, border: `1px solid ${T.colors.borderBright}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '12px', fontWeight: '600', color: T.colors.textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Total — {occPeriod === 'Custom' && appliedRange.from ? `${appliedRange.from} → ${appliedRange.to}` : occPeriod}
-            </span>
-            <div style={{ display: 'flex', gap: '40px' }}>
-              <div style={{ textAlign: 'right' }}>
-                <p style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 3px' }}>Avg Occupancy</p>
-                <p style={{ fontSize: '18px', fontWeight: '700', color: occColor(avgOcc), margin: 0, fontFamily: "'SF Mono', monospace", textShadow: occGlow(avgOcc) }}>{avgOcc}%</p>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <p style={{ fontSize: '10px', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 3px' }}>Total Revenue</p>
-                <p style={{ fontSize: '18px', fontWeight: '700', color: T.colors.green, margin: 0, fontFamily: "'SF Mono', monospace", textShadow: '0 0 12px rgba(34,197,94,0.3)' }}>R {totalRev.toLocaleString()}</p>
-              </div>
-            </div>
-          </div>
-        </div>
+        {scope && <OccupancyPanel key={scope} scope={scope} />}
+        {loadError && <p role="alert" style={{ color: T.colors.red }}>{loadError}</p>}
 
         {/* ══ 2. EVENT P&L SUMMARY (real, this calendar month) ═══════════ */}
         <div style={darkCard}>
@@ -504,7 +182,7 @@ export default function Reports() {
         <div style={darkCard}>
           <div style={{ padding: '20px 24px', borderBottom: `1px solid ${T.colors.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '13px', fontWeight: '600', color: T.colors.textPrimary }}>Player Tracker — Staff &amp; Ambassadors</span>
-            <span style={{ fontSize: '11px', color: T.colors.textMuted }}>This month's game counts</span>
+            <span style={{ fontSize: '11px', color: T.colors.textMuted }}>Stored monthly game counts</span>
           </div>
 
           <div style={{ padding: '14px 24px', borderBottom: `1px solid ${T.colors.border}`, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0' }}>

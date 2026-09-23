@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Send, Upload, CheckCircle2, Eye, ChevronDown, ChevronUp, Mail, Receipt } from 'lucide-react'
 import { theme } from '../../components/theme'
-import { listInvoiceableQuotes, getClubPricingForPreview, markInvoiced, sendToClient, uploadPop } from './actions'
+import { listInvoiceableQuotes, getClubPricingForPreview, markInvoiced, recordInvoiceSent, uploadPop, downloadPop } from './actions'
 
 const T = theme
 
@@ -16,28 +16,16 @@ const COMPANY = {
   accountNumber: '630 5620 8995',
 }
 
-function calcLineTotal(price: number, qtyOrHours: number, discountPct: number) {
-  const perUnitLess = price - price * (discountPct / 100)
-  return perUnitLess * qtyOrHours
+interface InvoiceQuote {
+  id: string; club_id: string; status: string; total: number | null
+  client_name: string; client_email: string; client_phone: string | null
+  event_type: string; event_date: string; event_time: string | null
+  created_at: string; invoice_number: string | null; pop_url: string | null
+  invoicing_company: string | null; invoicing_vat: string | null
+  clubs: { name: string } | null
+  email_log: { type: string; to?: string; timestamp: string }[] | null
 }
-
-function calcQuoteTotalFromPricing(quote: any, pricing: any) {
-  if (!pricing) return quote.total ?? 0
-  let total = 0
-  ;(quote.line_items?.courtLines ?? []).forEach((line: any) => {
-    const rate = pricing.courtRates[line.courtIndex]
-    const price = line.session === 'Peak' ? rate?.peak ?? 0 : rate?.offPeak ?? 0
-    total += calcLineTotal(price, line.hours, line.discountPct)
-  })
-  ;(quote.line_items?.extraLines ?? []).forEach((line: any) => {
-    const priceMap: any = { Coach: pricing.extras.coachHourly, Balls: pricing.extras.balls, 'Racket Rental': pricing.extras.racketRental, 'Venue Hire Exclusivity': pricing.extras.venueHireExclusivity }
-    total += calcLineTotal(priceMap[line.type], line.qty, line.discountPct)
-  })
-  ;(quote.line_items?.freeTextLines ?? []).forEach((line: any) => {
-    total += calcLineTotal(line.cost, line.qty, line.discountPct)
-  })
-  return total
-}
+type InvoicePricing = Awaited<ReturnType<typeof getClubPricingForPreview>>
 
 function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime()
@@ -58,36 +46,50 @@ const STAGE_META: Record<string, { label: string; color: string; bg: string }> =
 }
 
 export default function FinalInvoicePage() {
-  const [quotes, setQuotes] = useState<any[]>([])
+  const [quotes, setQuotes] = useState<InvoiceQuote[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [previewQuote, setPreviewQuote] = useState<any | null>(null)
-  const [previewPricing, setPreviewPricing] = useState<any | null>(null)
+  const [previewQuote, setPreviewQuote] = useState<InvoiceQuote | null>(null)
+  const [previewPricing, setPreviewPricing] = useState<InvoicePricing | null>(null)
   const [loading, setLoading] = useState(true)
+  const [actionError, setActionError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function run(task: () => Promise<void>) {
+    setBusy(true); setActionError('')
+    try { await task() } catch (error) { setActionError(error instanceof Error ? error.message : 'Operation failed.') } finally { setBusy(false) }
+  }
 
   async function reload() {
-    setQuotes(await listInvoiceableQuotes())
+    setQuotes(await listInvoiceableQuotes() as unknown as InvoiceQuote[])
     setLoading(false)
   }
 
-  useEffect(() => { reload() }, [])
+  useEffect(() => {
+    let cancelled = false
+    listInvoiceableQuotes().then(data => { if (!cancelled) setQuotes(data as unknown as InvoiceQuote[]) })
+      .catch(() => { if (!cancelled) setActionError('Unable to load invoices.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
 
   async function handleMarkInvoiced(id: string) {
     await markInvoiced(id)
     await reload()
   }
 
-  async function handleSendToClient(id: string, email: string) {
-    await sendToClient(id, email)
+  async function handleSendToClient(id: string) {
+    if (!window.confirm('Have you already sent this invoice to the client outside the platform? This records your confirmation; it does not send an email.')) return
+    await recordInvoiceSent(id)
     await reload()
   }
 
-  async function handleUploadPop(id: string, fileName: string, clubId: string) {
-    const pricing = await getClubPricingForPreview(clubId)
-    await uploadPop(id, fileName, pricing.popEmail)
+  async function handleUploadPop(id: string, file: File) {
+    const form = new FormData(); form.set('quoteId', id); form.set('file', file)
+    await uploadPop(form)
     await reload()
   }
 
-  async function openPreview(quote: any) {
+  async function openPreview(quote: InvoiceQuote) {
     const pricing = await getClubPricingForPreview(quote.club_id)
     setPreviewPricing(pricing)
     setPreviewQuote(quote)
@@ -108,17 +110,18 @@ export default function FinalInvoicePage() {
           </div>
           <h1 style={{ fontSize: '26px', fontWeight: '700', color: T.colors.textPrimary, margin: 0, letterSpacing: '-0.02em' }}>Final Invoices</h1>
           <p style={{ fontSize: '13px', color: T.colors.textSecondary, marginTop: '5px' }}>
-            Head Office approved quotes · send to client and confirm payment
+            Head Office approved quotes · record delivery and store proof of payment
           </p>
         </div>
 
         <div style={{ ...T.card, marginBottom: '20px', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <Receipt size={16} color={T.colors.textMuted} />
           <p style={{ fontSize: '12px', color: T.colors.textMuted, margin: 0 }}>
-            Once Head Office approves a quote and returns a final invoice, mark it Invoiced here. Sending to the client and uploading POP both trigger automatic emails once connected — no manual forwarding needed.
+            Email delivery is not connected. Send the invoice separately, then record that it was sent. Uploaded proof of payment is stored privately; it does not confirm payment or notify Head Office automatically.
           </p>
         </div>
 
+        {actionError && <p role="alert" style={{ color: T.colors.red }}>{actionError}</p>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {quotes.length === 0 && (
             <div style={{ ...T.card, textAlign: 'center', padding: '40px', color: T.colors.textMuted }}>
@@ -126,7 +129,7 @@ export default function FinalInvoicePage() {
             </div>
           )}
 
-          {quotes.map((quote: any) => {
+          {quotes.map((quote) => {
             const isOpen = expandedId === quote.id
             const total = quote.total ?? 0
             const meta = STAGE_META[quote.status] ?? { label: quote.status, color: T.colors.textSecondary, bg: T.colors.surfaceRaised }
@@ -173,14 +176,14 @@ export default function FinalInvoicePage() {
                       </div>
                     </div>
 
-                    <button onClick={() => openPreview(quote)} style={{ ...T.btn.secondary, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', marginBottom: '16px' }}>
+                    <button onClick={() => run(() => openPreview(quote))} style={{ ...T.btn.secondary, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', marginBottom: '16px' }}>
                       <Eye size={12} /> Preview Invoice
                     </button>
 
                     {emailLog.length > 0 && (
                       <div style={{ marginBottom: '16px' }}>
-                        <p style={{ fontSize: '10px', fontWeight: '700', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>Email Log</p>
-                        {emailLog.map((log: any, i: number) => (
+                        <p style={{ fontSize: '10px', fontWeight: '700', color: T.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>Activity Log</p>
+                        {emailLog.map((log, i) => (
                           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: T.colors.textMuted, marginBottom: '4px' }}>
                             <Mail size={11} /> <span style={{ color: T.colors.textSecondary }}>{log.type}</span> → {log.to} · {timeAgo(log.timestamp)}
                           </div>
@@ -189,26 +192,26 @@ export default function FinalInvoicePage() {
                     )}
 
                     <div style={{ borderTop: `1px solid ${T.colors.border}`, paddingTop: '16px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                      {(quote.status === 'pending_approval' || quote.status === 'sent_back_for_changes' || quote.status === 'approved') && (
-                        <button onClick={() => handleMarkInvoiced(quote.id)} style={{ ...T.btn.primary, background: '#a855f7', boxShadow: '0 0 10px rgba(168,85,247,0.3)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {(quote.status === 'approved') && (
+                        <button disabled={busy} onClick={() => run(() => handleMarkInvoiced(quote.id))} style={{ ...T.btn.primary, background: '#a855f7', boxShadow: '0 0 10px rgba(168,85,247,0.3)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <Receipt size={13} /> Mark Invoiced by HO
                         </button>
                       )}
                       {quote.status === 'invoiced' && (
-                        <button onClick={() => handleSendToClient(quote.id, quote.client_email)} style={{ ...T.btn.primary, background: '#3b82f6', boxShadow: '0 0 10px rgba(59,130,246,0.3)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <Send size={13} /> Send to Client &amp; Request POP
+                        <button disabled={busy} onClick={() => run(() => handleSendToClient(quote.id))} style={{ ...T.btn.primary, background: '#3b82f6', boxShadow: '0 0 10px rgba(59,130,246,0.3)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Send size={13} /> Record invoice sent
                         </button>
                       )}
-                      {quote.status === 'sent' && (
+                      {['sent', 'closed', 'paid'].includes(quote.status) && (
                         <label style={{ ...T.btn.primary, background: T.colors.amber, display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                          <Upload size={13} /> Upload POP &amp; Notify HO
-                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUploadPop(quote.id, f.name, quote.club_id) }} />
+                          <Upload size={13} /> Upload proof of payment
+                          <input disabled={busy} type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) run(() => handleUploadPop(quote.id, f)) }} />
                         </label>
                       )}
-                      {(quote.status === 'closed' || quote.status === 'paid') && quote.pop_url && (
+                      {quote.pop_url && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: T.colors.greenGlow, border: '1px solid rgba(34,197,94,0.2)', borderRadius: T.radius.sm }}>
                           <CheckCircle2 size={13} color={T.colors.green} />
-                          <span style={{ fontSize: '12px', color: T.colors.green }}>Closed — POP received ({quote.pop_url})</span>
+                          <button disabled={busy} onClick={() => run(async () => { window.location.assign(await downloadPop(quote.id)) })}>Download proof of payment</button>
                         </div>
                       )}
                     </div>
@@ -249,7 +252,8 @@ export default function FinalInvoicePage() {
             </table>
 
             {(() => {
-              const total = calcQuoteTotalFromPricing(previewQuote, previewPricing)
+              // Invoice totals are the saved quote amount, never today's court prices.
+              const total = previewQuote.total ?? 0
               const exclVat = total / 1.15
               const vat = total - exclVat
               return (

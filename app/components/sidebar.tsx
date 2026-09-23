@@ -26,6 +26,7 @@ const NAV_GROUPS = [
     icon: Shield,
     items: [
       { label: 'Dashboard', href: '/',         icon: LayoutDashboard },
+      { label: 'Utilisation', href: '/utilisation', icon: BarChart2, requires: 'manage_utilisation' },
       { label: 'Reports',   href: '/reports',  icon: BarChart2       },
       { label: 'Events',    href: '/events',   icon: Calendar        },
     ],
@@ -86,7 +87,7 @@ const NAV_GROUPS = [
 
 // Every permission key referenced by a `requires` field anywhere above.
 // New backend pages just need their key added here + on the nav item itself.
-const PERMISSION_KEYS_TO_CHECK = ['manage_infrastructure', 'manage_hr_finance', 'manage_finance']
+const PERMISSION_KEYS_TO_CHECK = ['manage_utilisation', 'manage_infrastructure', 'manage_hr_finance', 'manage_finance']
 
 interface SidebarProps {
   collapsed: boolean
