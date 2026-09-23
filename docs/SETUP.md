@@ -2,10 +2,10 @@
 
 ## Database prerequisites
 
-The supplied partial column export and access policies have been reviewed, but
-the complete live schema, grants and triggers are still needed. Run the whole
-`supabase/inspect-schema.sql` query in Supabase SQL Editor, download its single
-result as CSV, and compare it before applying anything to production. The additive migrations expect:
+The complete metadata export has now been reviewed. The existing report prerequisites
+and invoice fields are present. The export also confirms a profile self-promotion
+vulnerability and excessive table privileges, addressed by migration 004 below.
+Use `supabase/inspect-schema.sql` to refresh the review after staging changes. The additive migrations expect:
 
 - `public.clubs(id uuid, name text)`
 - `public.profiles(id uuid, is_hoo boolean)`
@@ -20,6 +20,7 @@ Apply, in order, to a staging database containing the existing application schem
 1. `supabase/migrations/202609220001_reporting.sql`
 2. `supabase/migrations/202609220002_ai_quota.sql`
 3. `supabase/migrations/202609220003_invoice_proofs.sql`
+4. `supabase/migrations/202609230001_profile_security.sql`
 
 Use the existing migration workflow if one is already used by the company. These
 files are transactional and should be applied once. They do not recreate the
@@ -76,28 +77,33 @@ uses a timeout and allows at most five requests per minute per user.
 For rollback, redeploy the preceding application version; keep the additive tables
 and archived data intact. Do not drop archives to roll back a UI release.
 
-## Findings from the supplied database metadata
+## Findings from the complete database metadata
 
-These are review findings, not proof of effective runtime access: table grants,
-RLS enablement, constraints and triggers have not yet been supplied.
-
-- The column list ends at `event_quotes.event_type`. Later tables and additional
-  quote fields must be checked against a complete export, not assumed absent.
-- `profiles_update_own` permits updating one's own profile. Verify that column
-  grants or a trigger prevent a non-HOO user from changing `is_hoo`; otherwise
-  the reporting access model can be bypassed by self-promotion.
-- Policies depend on `has_club_access`, whose definition is still needed.
+- All invoice fields used by the application are present, including invoice number,
+  event time, pax and invoicing details. Quote status constraints include invoiced
+  and paid. No missing-column migration is needed for these fields.
+- `has_club_access` matches the assignment/HOO/global access model used by reports.
+- Profiles have RLS enabled, but the self-update policy, unrestricted UPDATE grant
+  and absence of profile triggers allow self-promotion to HOO. Migration 004 adds
+  a trigger protecting `is_hoo` and profile identity. Ordinary profile edits and
+  existing HOO role administration remain available; trusted database maintenance
+  roles retain access. The regression test reproduces the original escalation
+  and verifies it fails after migration.
+- Application roles have TRUNCATE and TRIGGER grants on public tables. Migration
+  004 removes those privileges from anon, authenticated and PUBLIC on existing
+  public tables. Future table migrations must avoid granting them again.
 - HR policies use `manage_hr_finance`, while the current HR role preset grants
   `manage_hr`. Infrastructure policies use `manage_infrastructure`, which the
-  current permission picker does not expose. Check the permission catalog and
-  its constraints before changing presets or migrating existing assignments.
-- `clubs` permits reads by every authenticated user. Existing club selectors
-  must not assume this policy limits the directory to assigned clubs. The new
-  reporting access function checks assignments and global access explicitly.
-- The supplied quote UPDATE policy does not allow ordinary managers to set
-  `invoiced`. Review invoice transitions, status constraints and field protection
-  together before changing this policy.
+  current permission picker does not expose. These remain follow-up UI/catalog
+  work; existing assignments have not been silently broadened.
+- `clubs` allows reads by every authenticated user. Existing club selectors must
+  not assume that this policy limits the directory to assigned clubs. Reporting
+  uses its own explicit access check.
+- Quote UPDATE rules still require review alongside invoice transitions: ordinary
+  managers cannot set `invoiced`, and row-level rules alone do not protect every
+  approved financial field from edits.
 
-The inspection query includes complete columns, constraints, policies, RLS flags,
-grants, non-internal triggers and the three access helpers in one result. It is
-read-only and does not export application records.
+Migration 004 can be staged independently against the exported existing schema.
+Verify manager self-promotion is rejected, normal profile edits still work, and
+HOO role administration works before applying it to production. The export and
+local tests do not establish that this fix has been applied to the live database.
