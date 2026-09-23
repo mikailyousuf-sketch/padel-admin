@@ -127,3 +127,12 @@ local tests do not establish that this fix has been applied to the live database
    if account cleanup fails, the form must explicitly report that condition.
 
 No live Auth email delivery or browser acceptance check has been completed here.
+
+## Reporting correction after the original project handoff
+
+Manual report upload UI and its server action are disabled. Earlier instructions
+in this document to import a template describe the previous interim workflow and
+are superseded. No new database migration is required for this UI/export change.
+The Playtomic feed is still pending implementation and credentials. Users can
+export a blank branded workbook to review the established layout without inventing
+occupancy or revenue. Existing archives are retained unchanged.

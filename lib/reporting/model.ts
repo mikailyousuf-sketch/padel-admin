@@ -22,7 +22,7 @@ export interface DailyReport {
   updated_at: string
 }
 
-export interface ReportClub { id: string; name: string }
+export interface ReportClub { id: string; name: string; court_count?: number; pickleball_court_count?: number }
 
 export function summarise(courts: CourtDay[]) {
   const sum = (key: keyof CourtDay) => courts.reduce((total, row) => total + Number(row[key]), 0)

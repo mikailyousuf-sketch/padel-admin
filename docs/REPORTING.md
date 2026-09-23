@@ -1,4 +1,34 @@
-# Reporting contract
+# Reporting workflow
+
+Reports are intended to feed automatically from the official Playtomic API.
+Managers should never prepare or upload reporting spreadsheets. Manual upload
+controls and their server action are now disabled. Existing manual data and
+archives remain available and are explicitly labelled as historical manual data.
+
+The occupancy export reuses `app/lib/exportExcel.ts`: DAILY SUMMARY, monthly
+club tabs, weekday columns, red headers, dark totals and alternating row shading.
+Only authorized clubs appear. Historical summaries use the selected end date.
+The supporting Daily reports and Definitions tabs retain provenance and missing
+calendar dates. Event P&L exports continue using their original exporter.
+Targets and pickleball measurements not supplied by the reporting contract stay
+blank; no inferred targets or invented pickleball figures are inserted.
+
+## Playtomic connection status
+
+The direct sync is not implemented or active. Credentials are still unavailable.
+Official documentation is now identified and must guide implementation:
+- https://third-party.playtomic.io/
+- https://third-party.playtomic.io/endpoints/auth/
+- https://third-party.playtomic.io/endpoints/bookings/
+
+Required next integration work: server-only credentials, club/tenant and court
+mapping, paginated booking retrieval, rate-limit handling, UTC-to-SAST conversion,
+cancellations/refunds reconciliation, durable sync checkpoints, and automatic
+branded workbook archives. Booking price must not be treated as collected net
+revenue without reconciling payments/refunds. Verify capacity/closures separately.
+Never expose credentials to client components or commit secrets to GitHub.
+
+## Historical manual-data contract (retained for existing records/tests)
 
 CSV uploads use one row per court per calendar date in Africa/Johannesburg. All
 configured padel courts must be present for each included date, even if closed.
