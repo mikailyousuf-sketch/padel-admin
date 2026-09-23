@@ -2,9 +2,10 @@
 
 ## Database prerequisites
 
-This change is based on application queries, not an export of the live database.
-Run `supabase/inspect-schema.sql` in Supabase SQL Editor and compare its output
-before applying anything to production. The additive migrations expect:
+The supplied partial column export and access policies have been reviewed, but
+the complete live schema, grants and triggers are still needed. Run the whole
+`supabase/inspect-schema.sql` query in Supabase SQL Editor, download its single
+result as CSV, and compare it before applying anything to production. The additive migrations expect:
 
 - `public.clubs(id uuid, name text)`
 - `public.profiles(id uuid, is_hoo boolean)`
@@ -74,3 +75,29 @@ uses a timeout and allows at most five requests per minute per user.
 
 For rollback, redeploy the preceding application version; keep the additive tables
 and archived data intact. Do not drop archives to roll back a UI release.
+
+## Findings from the supplied database metadata
+
+These are review findings, not proof of effective runtime access: table grants,
+RLS enablement, constraints and triggers have not yet been supplied.
+
+- The column list ends at `event_quotes.event_type`. Later tables and additional
+  quote fields must be checked against a complete export, not assumed absent.
+- `profiles_update_own` permits updating one's own profile. Verify that column
+  grants or a trigger prevent a non-HOO user from changing `is_hoo`; otherwise
+  the reporting access model can be bypassed by self-promotion.
+- Policies depend on `has_club_access`, whose definition is still needed.
+- HR policies use `manage_hr_finance`, while the current HR role preset grants
+  `manage_hr`. Infrastructure policies use `manage_infrastructure`, which the
+  current permission picker does not expose. Check the permission catalog and
+  its constraints before changing presets or migrating existing assignments.
+- `clubs` permits reads by every authenticated user. Existing club selectors
+  must not assume this policy limits the directory to assigned clubs. The new
+  reporting access function checks assignments and global access explicitly.
+- The supplied quote UPDATE policy does not allow ordinary managers to set
+  `invoiced`. Review invoice transitions, status constraints and field protection
+  together before changing this policy.
+
+The inspection query includes complete columns, constraints, policies, RLS flags,
+grants, non-internal triggers and the three access helpers in one result. It is
+read-only and does not export application records.
