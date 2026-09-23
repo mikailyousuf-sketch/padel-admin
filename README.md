@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Padel Admin
 
-## Getting Started
+Next.js + Supabase club administration. Includes events, HR, maintenance,
+quotes/invoices and daily occupancy/revenue reporting.
 
-First, run the development server:
+## Run locally
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Use Node.js 22 or later. Install with `npm ci`. Create an untracked `.env.local`:
+
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_PUBLIC_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_SERVICE_ROLE_KEY
+# Optional. AI stays disabled unless both are configured.
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Never put the service-role or AI key in a `NEXT_PUBLIC_` variable. Existing user
+and club administration uses the service-role client only after server checks.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Apply the migrations described in [setup](docs/SETUP.md) to a staging copy of the
+existing Supabase database before testing. This repository does not yet include
+the original database schema. The migrations are additive, not a fresh-database
+installer. Use `npm run dev`, then sign in with an existing invited user.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Daily reporting
 
-## Learn More
+1. Choose a club or all accessible clubs.
+2. Open **Reports → Import daily figures**.
+3. Select a club and download its CSV template.
+4. Fill in every court for each date. Dates use `YYYY-MM-DD`; money uses rand and
+   cents without currency symbols. Template blanks deliberately fail validation.
+5. Upload and save. A private Excel archive and versioned daily figures are saved.
+6. Adjust the date range to view the figures or export a combined workbook.
 
-To learn more about Next.js, take a look at the following resources:
+See [reporting definitions and limits](docs/REPORTING.md). The adapter currently
+accepts the platform's template, **not arbitrary Playtomic exports**. No Playtomic
+API calls or unattended data collection are implemented yet.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checks
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm test
+npm run typecheck
+npm run build
+npm run lint
+```
 
-## Deploy on Vercel
+Tests cover date boundaries, CSV validation, report calculations, generated Excel
+values and migration/RLS behavior using an isolated PostgreSQL-compatible PGlite
+database. They do not contact production Supabase. The build requires public
+Supabase variables; CI uses clearly non-production placeholders.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The repository still has legacy lint errors in older modules. CI checks all
+TypeScript, the new reporting/API code, regression tests and the production build;
+it does not disable the existing full lint rules.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Invoice workflow
+
+Email delivery is not connected. **Record invoice sent** explicitly acknowledges
+sending outside the platform. Proof-of-payment files are uploaded privately and
+can be downloaded with short-lived signed URLs. Uploading a document never marks
+an invoice paid. Live database permissions for the older quote, HR, maintenance
+and settings tables still require auditing against the actual Supabase project.

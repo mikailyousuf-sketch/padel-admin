@@ -4,7 +4,7 @@ import { ROLE_PRESETS, PERMISSION_KEYS } from './constants'
 
 export function RoleSelector() {
   const [selectedRole, setSelectedRole] = useState<string>('manager')
-  const activePermissions = ROLE_PRESETS[selectedRole as keyof typeof ROLE_PRESETS]?.permissions ?? []
+  const activePermissions: readonly string[] = ROLE_PRESETS[selectedRole as keyof typeof ROLE_PRESETS]?.permissions ?? []
 
   return (
     <div>

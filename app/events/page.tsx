@@ -1,5 +1,6 @@
 'use client'
 
+import { monthRange } from '@/lib/reporting/dates'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronUp, ChevronDown, Plus, Download, AlertTriangle } from 'lucide-react'
@@ -116,8 +117,7 @@ export default function EventsPage() {
   const [scopeIsCompany, setScopeIsCompany] = useState(false)
 
   const monthLabel = `${MONTH_OPTIONS[selectedMonthIdx]} ${selectedYear}`
-  const monthStart = new Date(selectedYear, selectedMonthIdx, 1).toISOString().slice(0, 10)
-  const monthEnd = new Date(selectedYear, selectedMonthIdx + 1, 0).toISOString().slice(0, 10)
+  const { from: monthStart, to: monthEnd } = monthRange(selectedYear, selectedMonthIdx)
 
   // Land on whatever was chosen at /select-club — company-wide summary if
   // "Entire Company" was picked, or straight into that specific club's
