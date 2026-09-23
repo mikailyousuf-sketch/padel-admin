@@ -82,3 +82,20 @@ test('WhatsApp schedules validate times, tokens and event dates', () => {
   assert.throws(() => validateCampaign({ ...valid, kind: 'event', scheduledAt: '2020-01-01T09:00:00+02:00' }), /future/)
   assert.equal(previewMessage('Hi {{club}}', { club: 'Test' }), 'Hi Test')
 })
+
+const { demoData, clubMetrics } = require('../lib/utilisation/model.ts')
+test('utilisation demo is deterministic, bounded and withholds targets for missing dates', () => {
+  const sample = demoData('2026-09-01','2026-09-30')
+  assert.deepEqual(sample, demoData('2026-09-01','2026-09-30'))
+  for (const club of sample.clubs) {
+    const metrics = clubMetrics(club, sample.reports, '2026-09-01','2026-09-30')
+    assert.ok(metrics.occupancy >= 0 && metrics.occupancy <= 100)
+    assert.equal(metrics.days + metrics.missingDays, 30)
+    const own = sample.reports.filter(r => r.club_id === club.id)
+    assert.equal(metrics.netRevenueCents, summarise(own.flatMap(r => r.courts)).netRevenueCents)
+    if (metrics.missingDays) assert.equal(metrics.targetPercent, null)
+  }
+  const empty = clubMetrics(sample.clubs[0], [], '2026-09-01','2026-09-30')
+  assert.equal(empty.occupancy, null)
+  assert.equal(empty.targetPercent, null)
+})
