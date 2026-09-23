@@ -1,5 +1,6 @@
-import { listClubs, listUsers, createManagedUser, deleteManagedUser } from './actions'
-import { PERMISSION_KEYS, matchRolePreset } from './constants'
+import { ActionForm } from './action-form'
+import { listClubs, listUsers, submitManagedUser, submitRemoveUser } from './actions'
+import { matchRolePreset } from './constants'
 import { RoleSelector } from './role-selector'
 import { theme } from '../../components/theme'
 import { Shield, Trash2, UserPlus, Building2 } from 'lucide-react'
@@ -28,8 +29,9 @@ export default async function UsersAdminPage() {
         {/* ══════════════════════════════════════════════════════════════
             CREATE USER FORM
         ══════════════════════════════════════════════════════════════ */}
-        <form
-          action={createManagedUser}
+        <ActionForm
+          action={submitManagedUser}
+          successMessage="Invitation sent and access configured."
           style={{
             ...T.card,
             marginBottom: '32px',
@@ -76,7 +78,7 @@ export default async function UsersAdminPage() {
               <Building2 size={11} /> Club Assignments
             </label>
             <p style={{ fontSize: '11px', color: T.colors.textMuted, margin: '0 0 12px' }}>
-              Ignored if Head Office is checked above. Otherwise, this user only sees data for the clubs selected here.
+              Select clubs for managers. Head Office and roles with all-clubs access can access every club.
             </p>
             <div style={{
               display: 'flex', flexWrap: 'wrap', gap: '8px',
@@ -111,7 +113,7 @@ export default async function UsersAdminPage() {
           }}>
             <UserPlus size={14} /> Send Invite
           </button>
-        </form>
+        </ActionForm>
 
         {/* ══════════════════════════════════════════════════════════════
             EXISTING USERS
@@ -156,7 +158,7 @@ export default async function UsersAdminPage() {
                     </p>
                   </div>
 
-                  <form action={deleteManagedUser.bind(null, u.id)} style={{ flexShrink: 0 }}>
+                  <ActionForm action={submitRemoveUser.bind(null, u.id)} confirmation={`Remove ${u.full_name || u.email}? This permanently deletes their login.`} successMessage="User removed." style={{ flexShrink: 0 }}>
                     <button type="submit" style={{
                       ...T.btn.ghost,
                       display: 'flex', alignItems: 'center', gap: '6px',
@@ -165,7 +167,7 @@ export default async function UsersAdminPage() {
                     }}>
                       <Trash2 size={11} /> Remove
                     </button>
-                  </form>
+                  </ActionForm>
                 </div>
               </div>
             ))}

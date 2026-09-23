@@ -10,14 +10,15 @@ const rows = [{ report_date: '2026-01-01', court_number: 1, available_minutes: 6
 test('database migrations, access rules and atomic corrections', async t => {
   const db = new PGlite()
   await db.exec(`
-    create role anon; create role authenticated;
+    create role anon; create role authenticated; create role service_role;
     create schema auth; create schema storage;
     create table auth.users(id uuid primary key);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema public, auth, storage to authenticated, anon;
     grant execute on function auth.uid() to authenticated, anon;
     create table public.clubs(id uuid primary key, name text);
-    create table public.profiles(id uuid primary key, is_hoo boolean);
+    create table public.permissions(key text primary key, description text);
+    create table public.profiles(id uuid primary key, is_hoo boolean, full_name text, email text);
     create table public.club_assignments(user_id uuid, club_id uuid);
     create table public.user_permissions(user_id uuid, permission_key text);
     create table public.club_config(club_id uuid, court_count integer);
@@ -30,7 +31,7 @@ test('database migrations, access rules and atomic corrections', async t => {
     grant select on public.event_quotes to authenticated;
     insert into auth.users values('${userA}'),('${userB}');
     insert into public.clubs values('${clubA}','Club A'),('${clubB}','Club B');
-    insert into public.profiles values('${userA}',false),('${userB}',false);
+    insert into public.profiles(id,is_hoo) values('${userA}',false),('${userB}',false);
     insert into public.club_assignments values('${userA}','${clubA}'),('${userB}','${clubB}');
     insert into public.club_config values('${clubA}',1),('${clubB}',1);
   `)

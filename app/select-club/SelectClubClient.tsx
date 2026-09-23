@@ -23,15 +23,18 @@ const ClubMap = dynamic(() => import('./ClubMap'), {
   ),
 })
 
-export default function SelectClubClient({ clubs }: { clubs: ClubLocation[] }) {
+export default function SelectClubClient({ clubs, canViewCompany }: { clubs: ClubLocation[]; canViewCompany: boolean }) {
   const [submitting, setSubmitting] = useState<string | null>(null)
+  const [error, setError] = useState('')
   const isMultiClub = clubs.length > 1
   const locatedClubs = clubs.filter(c => c.latitude != null && c.longitude != null)
 
   async function handleSelect(value: string) {
     setSubmitting(value)
-    await selectScope(value) // redirects on success; if it throws, reset below
-    setSubmitting(null)
+    setError('')
+    try { await selectScope(value) }
+    catch { setError('Could not open that club. Check your access or refresh and retry.') }
+    finally { setSubmitting(null) }
   }
 
   return (
@@ -44,12 +47,12 @@ export default function SelectClubClient({ clubs }: { clubs: ClubLocation[] }) {
           </h1>
           <p style={{ fontSize: '13px', color: T.colors.textSecondary, marginTop: '6px' }}>
             {isMultiClub
-              ? 'Click a club on the map, or view the entire company at once.'
+              ? (canViewCompany ? 'Choose a club or view the entire company.' : 'Choose one of your assigned clubs.')
               : 'Click your club on the map to continue.'}
           </p>
         </div>
 
-        {isMultiClub && (
+        {canViewCompany && (
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
             <button
               onClick={() => handleSelect(COMPANY_SCOPE)}
@@ -65,6 +68,8 @@ export default function SelectClubClient({ clubs }: { clubs: ClubLocation[] }) {
           </div>
         )}
 
+        {error && <p role="alert" style={{ color: '#ff9999' }}>{error}</p>}
+        {clubs.length === 0 && <p role="status">No active clubs are assigned to your account. Ask Head Office to assign a club.</p>}
         {locatedClubs.length === 0 ? (
           <div style={{
             ...T.card, textAlign: 'center', padding: '48px 24px',

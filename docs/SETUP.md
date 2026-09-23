@@ -21,6 +21,8 @@ Apply, in order, to a staging database containing the existing application schem
 2. `supabase/migrations/202609220002_ai_quota.sql`
 3. `supabase/migrations/202609220003_invoice_proofs.sql`
 4. `supabase/migrations/202609230001_profile_security.sql`
+5. `supabase/migrations/202609230002_permission_catalog.sql`
+6. `supabase/migrations/202609230003_managed_user_setup.sql`
 
 Use the existing migration workflow if one is already used by the company. These
 files are transactional and should be applied once. They do not recreate the
@@ -92,13 +94,15 @@ and archived data intact. Do not drop archives to roll back a UI release.
 - Application roles have TRUNCATE and TRIGGER grants on public tables. Migration
   004 removes those privileges from anon, authenticated and PUBLIC on existing
   public tables. Future table migrations must avoid granting them again.
-- HR policies use `manage_hr_finance`, while the current HR role preset grants
-  `manage_hr`. Infrastructure policies use `manage_infrastructure`, which the
-  current permission picker does not expose. These remain follow-up UI/catalog
-  work; existing assignments have not been silently broadened.
-- `clubs` allows reads by every authenticated user. Existing club selectors must
-  not assume that this policy limits the directory to assigned clubs. Reporting
-  uses its own explicit access check.
+- HR and Infrastructure role presets now use the keys checked by the database.
+  Migration 005 registers those keys. Existing user assignments are unchanged;
+  review legacy HR accounts explicitly before granting staff compensation access.
+- The club picker now filters assignments explicitly and only offers company scope
+  to users with global access. Server-side scope selection checks authorization.
+- Migration 006 makes new-user profile/assignment/permission setup transactional.
+  Apply it before using the updated invite form. Invitations themselves use the
+  external Auth API; if SQL setup fails, the action attempts to remove only the
+  newly created Auth identity and reports any cleanup failure.
 - Quote UPDATE rules still require review alongside invoice transitions: ordinary
   managers cannot set `invoiced`, and row-level rules alone do not protect every
   approved financial field from edits.
@@ -107,3 +111,19 @@ Migration 004 can be staged independently against the exported existing schema.
 Verify manager self-promotion is rejected, normal profile edits still work, and
 HOO role administration works before applying it to production. The export and
 local tests do not establish that this fix has been applied to the live database.
+
+## Human acceptance checks for user-management changes
+
+1. Sign in as a manager: only assigned active clubs should appear. HOO should see
+   all active clubs and the company option. Confirm a manager cannot select an
+   unassigned club by directly calling the scope action.
+2. Invite a test manager with no club selected: expect a validation message and
+   no invitation. Then select a club and confirm one invitation and correct access.
+3. Invite HR and Infrastructure test accounts; verify their intended pages and
+   ensure ordinary managers cannot enter restricted administration pages.
+4. Double-click Send Invite: the form should disable while the request is pending.
+5. Cancel Remove: the user should remain. Self-removal and HOO removal must fail.
+6. Test a failed setup in staging: no partially configured access should remain;
+   if account cleanup fails, the form must explicitly report that condition.
+
+No live Auth email delivery or browser acceptance check has been completed here.

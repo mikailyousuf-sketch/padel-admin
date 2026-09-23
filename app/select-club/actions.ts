@@ -1,5 +1,5 @@
 'use server'
-import { createClient } from '@/lib/supabase/server'
+import { getClubAccess } from '@/lib/auth/club-access'
 
 export interface ClubLocation {
   id: string
@@ -8,17 +8,17 @@ export interface ClubLocation {
   longitude: number | null
 }
 
-// RLS naturally scopes this: a manager gets back exactly their one club,
-// a regional gets their assigned subset, HOO gets everything. The page
-// doesn't need to know which of those it's talking to — it just reacts
-// to how many rows come back.
+// Filter explicitly because the directory itself is visible to authenticated users.
 export async function listAccessibleClubsWithLocation(): Promise<ClubLocation[]> {
-  const supabase = await createClient()
-  const { data, error } = await supabase
+  const { client, global, clubIds } = await getClubAccess()
+  if (!global && clubIds.length === 0) return []
+  let query = client
     .from('clubs')
     .select('id, name, latitude, longitude')
     .eq('is_active', true)
     .order('name')
+  if (!global) query = query.in('id', clubIds)
+  const { data, error } = await query
   if (error) throw error
   return data as ClubLocation[]
 }
